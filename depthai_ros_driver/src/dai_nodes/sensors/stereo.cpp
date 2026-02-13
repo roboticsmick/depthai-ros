@@ -7,6 +7,8 @@
 #include "depthai/pipeline/Pipeline.hpp"
 #include "depthai/pipeline/datatype/ADatatype.hpp"
 #include "depthai/pipeline/datatype/ImgFrame.hpp"
+#include "depthai/pipeline/datatype/ImageFiltersConfig.hpp"
+#include "depthai/pipeline/node/ImageFilters.hpp"
 #include "depthai/pipeline/node/StereoDepth.hpp"
 #include "depthai_ros_driver/dai_nodes/nn/nn_helpers.hpp"
 #include "depthai_ros_driver/dai_nodes/nn/spatial_nn_wrapper.hpp"
@@ -70,6 +72,15 @@ Stereo::Stereo(const std::string& daiNodeName,
                                                          ph->getParam<float>(ParamNames::FPS));
     leftOut->link(stereoCamNode->left);
     rightOut->link(stereoCamNode->right);
+
+    // Create host-side ImageFilters node for disparity post-processing if requested
+    if(ph->getParam<bool>("i_use_host_filters")) {
+        imageFiltersNode = pipeline->create<dai::node::ImageFilters>();
+        imageFiltersNode->setRunOnHost(true);
+        imageFiltersNode->build(stereoCamNode->disparity);
+        ph->configureImageFilters(imageFiltersNode->initialConfig);
+        RCLCPP_INFO(getLogger(), "Using host-side ImageFilters for disparity post-processing");
+    }
 
     aligned = ph->getParam<bool>(param_handlers::ParamNames::ALIGNED);
     if(ph->getParam<bool>("i_enable_left_spatial_nn")) {
@@ -139,7 +150,8 @@ void Stereo::setInOut(std::shared_ptr<dai::Pipeline> pipeline) {
         encConf.enabled = lowBandwidth;
 
         if(outputDisparity || lowBandwidth) {
-            stereoPub = setupOutput(pipeline, stereoQName, &stereoCamNode->disparity, ph->getParam<bool>("i_synced"), encConf);
+            auto& disparityOut = imageFiltersNode ? imageFiltersNode->output : stereoCamNode->disparity;
+            stereoPub = setupOutput(pipeline, stereoQName, &disparityOut, ph->getParam<bool>("i_synced"), encConf);
         } else {
             if(aligned && platform == dai::Platform::RVC4) {
                 stereoPub = setupOutput(pipeline, stereoQName, &alignNode->outputAligned, ph->getParam<bool>("i_synced"), encConf);

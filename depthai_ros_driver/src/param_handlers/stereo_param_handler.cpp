@@ -1,6 +1,7 @@
 #include "depthai_ros_driver/param_handlers/stereo_param_handler.hpp"
 
 #include "depthai/common/CameraFeatures.hpp"
+#include "depthai/pipeline/datatype/ImageFiltersConfig.hpp"
 #include "depthai/pipeline/datatype/StereoDepthConfig.hpp"
 #include "depthai/pipeline/node/StereoDepth.hpp"
 #include "depthai_ros_driver/param_handlers/base_param_handler.hpp"
@@ -38,6 +39,10 @@ StereoParamHandler::StereoParamHandler(std::shared_ptr<rclcpp::Node> node, const
         {"VALID_1_IN_LAST_8", dai::StereoDepthConfig::PostProcessing::TemporalFilter::PersistencyMode::VALID_1_IN_LAST_8},
         {"PERSISTENCY_INDEFINITELY", dai::StereoDepthConfig::PostProcessing::TemporalFilter::PersistencyMode::PERSISTENCY_INDEFINITELY},
     };
+
+    medianFilterMap = {{"MEDIAN_OFF", dai::StereoDepthConfig::MedianFilter::MEDIAN_OFF},
+                       {"KERNEL_3x3", dai::StereoDepthConfig::MedianFilter::KERNEL_3x3},
+                       {"KERNEL_5x5", dai::StereoDepthConfig::MedianFilter::KERNEL_5x5}};
 }
 
 StereoParamHandler::~StereoParamHandler() = default;
@@ -132,7 +137,13 @@ void StereoParamHandler::declareParams(std::shared_ptr<dai::node::StereoDepth> s
     //
     stereo->initialConfig->setBilateralFilterSigma(declareAndLogParam<int>("i_bilateral_sigma", 0));
     stereo->initialConfig->setLeftRightCheckThreshold(declareAndLogParam<int>("i_lrc_threshold", 10));
-    // // stereo->initialConfig->setMedianFilter(static_cast<dai::MedianFilter>(declareAndLogParam<int>("i_depth_filter_size", 5)));
+    bool useHostFilters = declareAndLogParam<bool>("i_use_host_filters", false);
+    if(!useHostFilters) {
+        stereo->initialConfig->setMedianFilter(
+            utils::getValFromMap(declareAndLogParam<std::string>("i_median_filter", "MEDIAN_OFF"), medianFilterMap));
+    } else {
+        declareAndLogParam<std::string>("i_median_filter", "MEDIAN_OFF");
+    }
     stereo->initialConfig->setConfidenceThreshold(declareAndLogParam<int>("i_stereo_conf_threshold", 15));
     if(declareAndLogParam<bool>("i_subpixel", true) && !lowBandwidth) {
         stereo->initialConfig->setSubpixel(true);
@@ -151,27 +162,53 @@ void StereoParamHandler::declareParams(std::shared_ptr<dai::node::StereoDepth> s
     config->costMatching.disparityWidth = utils::getValFromMap(declareAndLogParam<std::string>("i_disparity_width", "DISPARITY_96"), disparityWidthMap);
     stereo->setExtendedDisparity(declareAndLogParam<bool>("i_extended_disp", false));
     config->costMatching.enableCompanding = declareAndLogParam<bool>("i_enable_companding", false);
-    if(declareAndLogParam<bool>("i_enable_temporal_filter", false)) {
-        config->postProcessing.temporalFilter.enable = true;
-        config->postProcessing.temporalFilter.alpha = declareAndLogParam<float>("i_temporal_filter_alpha", 0.4);
-        config->postProcessing.temporalFilter.delta = declareAndLogParam<int>("i_temporal_filter_delta", 20);
-        config->postProcessing.temporalFilter.persistencyMode =
-            utils::getValFromMap(declareAndLogParam<std::string>("i_temporal_filter_persistency", "VALID_2_IN_LAST_4"), temporalPersistencyMap);
-    }
-    if(declareAndLogParam<bool>("i_enable_speckle_filter", false)) {
-        config->postProcessing.speckleFilter.enable = true;
-        config->postProcessing.speckleFilter.speckleRange = declareAndLogParam<int>("i_speckle_filter_speckle_range", 50);
-    }
-    if(declareAndLogParam<bool>("i_enable_disparity_shift", false)) {
-        config->algorithmControl.disparityShift = declareAndLogParam<int>("i_disparity_shift", 0);
+    // Declare filter params (used by both device-side PostProcessing and host-side ImageFilters)
+    bool enableTemporal = declareAndLogParam<bool>("i_enable_temporal_filter", false);
+    float temporalAlpha = declareAndLogParam<float>("i_temporal_filter_alpha", 0.4);
+    int temporalDelta = declareAndLogParam<int>("i_temporal_filter_delta", 20);
+    auto temporalPersistency = declareAndLogParam<std::string>("i_temporal_filter_persistency", "VALID_2_IN_LAST_4");
+
+    bool enableSpeckle = declareAndLogParam<bool>("i_enable_speckle_filter", false);
+    int speckleRange = declareAndLogParam<int>("i_speckle_filter_speckle_range", 50);
+    int speckleDiffThresh = declareAndLogParam<int>("i_speckle_filter_difference_threshold", 2);
+
+    bool enableSpatial = declareAndLogParam<bool>("i_enable_spatial_filter", false);
+    int spatialHoleRadius = declareAndLogParam<int>("i_spatial_filter_hole_filling_radius", 2);
+    float spatialAlpha = declareAndLogParam<float>("i_spatial_filter_alpha", 0.5);
+    int spatialDelta = declareAndLogParam<int>("i_spatial_filter_delta", 20);
+    int spatialIters = declareAndLogParam<int>("i_spatial_filter_iterations", 1);
+
+    if(!useHostFilters) {
+        // Apply filters on-device via StereoDepthConfig::PostProcessing
+        if(enableTemporal) {
+            config->postProcessing.temporalFilter.enable = true;
+            config->postProcessing.temporalFilter.alpha = temporalAlpha;
+            config->postProcessing.temporalFilter.delta = temporalDelta;
+            config->postProcessing.temporalFilter.persistencyMode = utils::getValFromMap(temporalPersistency, temporalPersistencyMap);
+        }
+        if(enableSpeckle) {
+            config->postProcessing.speckleFilter.enable = true;
+            config->postProcessing.speckleFilter.speckleRange = speckleRange;
+            config->postProcessing.speckleFilter.differenceThreshold = speckleDiffThresh;
+        }
+        if(enableSpatial) {
+            config->postProcessing.spatialFilter.enable = true;
+            config->postProcessing.spatialFilter.holeFillingRadius = spatialHoleRadius;
+            config->postProcessing.spatialFilter.alpha = spatialAlpha;
+            config->postProcessing.spatialFilter.delta = spatialDelta;
+            config->postProcessing.spatialFilter.numIterations = spatialIters;
+        }
+    } else {
+        // Disable device-side PostProcessing filters (the preset may have enabled them).
+        // These will run on the host via ImageFilters instead, avoiding double filtering.
+        config->postProcessing.spatialFilter.enable = false;
+        config->postProcessing.temporalFilter.enable = false;
+        config->postProcessing.speckleFilter.enable = false;
+        config->postProcessing.median = dai::StereoDepthConfig::MedianFilter::MEDIAN_OFF;
     }
 
-    if(declareAndLogParam<bool>("i_enable_spatial_filter", false)) {
-        config->postProcessing.spatialFilter.enable = true;
-        config->postProcessing.spatialFilter.holeFillingRadius = declareAndLogParam<int>("i_spatial_filter_hole_filling_radius", 2);
-        config->postProcessing.spatialFilter.alpha = declareAndLogParam<float>("i_spatial_filter_alpha", 0.5);
-        config->postProcessing.spatialFilter.delta = declareAndLogParam<int>("i_spatial_filter_delta", 20);
-        config->postProcessing.spatialFilter.numIterations = declareAndLogParam<int>("i_spatial_filter_iterations", 1);
+    if(declareAndLogParam<bool>("i_enable_disparity_shift", false)) {
+        config->algorithmControl.disparityShift = declareAndLogParam<int>("i_disparity_shift", 0);
     }
     if(declareAndLogParam<bool>("i_enable_threshold_filter", false)) {
         config->postProcessing.thresholdFilter.minRange = declareAndLogParam<int>("i_threshold_filter_min_range", 400);
@@ -200,5 +237,40 @@ void StereoParamHandler::declareParams(std::shared_ptr<dai::node::StereoDepth> s
     declareAndLogParam("i_height", height, true);
     stereo->initialConfig = config;
 }
+void StereoParamHandler::configureImageFilters(std::shared_ptr<dai::ImageFiltersConfig> config) {
+    std::vector<dai::FilterParams> params;
+
+    // Speckle filter
+    dai::SpeckleFilterParams speckle;
+    speckle.enable = getParam<bool>("i_enable_speckle_filter");
+    speckle.speckleRange = getParam<int>("i_speckle_filter_speckle_range");
+    speckle.differenceThreshold = getParam<int>("i_speckle_filter_difference_threshold");
+    params.push_back(speckle);
+
+    // Temporal filter
+    dai::TemporalFilterParams temporal;
+    temporal.enable = getParam<bool>("i_enable_temporal_filter");
+    temporal.alpha = getParam<float>("i_temporal_filter_alpha");
+    temporal.delta = getParam<int>("i_temporal_filter_delta");
+    temporal.persistencyMode = utils::getValFromMap(getParam<std::string>("i_temporal_filter_persistency"), temporalPersistencyMap);
+    params.push_back(temporal);
+
+    // Spatial filter
+    dai::SpatialFilterParams spatial;
+    spatial.enable = getParam<bool>("i_enable_spatial_filter");
+    spatial.holeFillingRadius = getParam<int>("i_spatial_filter_hole_filling_radius");
+    spatial.alpha = getParam<float>("i_spatial_filter_alpha");
+    spatial.delta = getParam<int>("i_spatial_filter_delta");
+    spatial.numIterations = getParam<int>("i_spatial_filter_iterations");
+    params.push_back(spatial);
+
+    // Median filter
+    auto median = utils::getValFromMap(getParam<std::string>("i_median_filter"), medianFilterMap);
+    params.push_back(static_cast<dai::MedianFilterParams>(median));
+
+    config->filterIndices = {};
+    config->filterParams = params;
+}
+
 }  // namespace param_handlers
 }  // namespace depthai_ros_driver

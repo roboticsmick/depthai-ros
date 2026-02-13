@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "depthai/pipeline/datatype/ImageFiltersConfig.hpp"
 #include "depthai/pipeline/datatype/StereoDepthConfig.hpp"
 #include "depthai/pipeline/node/StereoDepth.hpp"
 #include "depthai_ros_driver/param_handlers/base_param_handler.hpp"
@@ -24,6 +25,7 @@ class StereoParamHandler : public BaseParamHandler {
     explicit StereoParamHandler(std::shared_ptr<rclcpp::Node> node, const std::string& name, const std::string& deviceName, bool rsCompat);
     ~StereoParamHandler();
     void declareParams(std::shared_ptr<dai::node::StereoDepth> stereo);
+    void configureImageFilters(std::shared_ptr<dai::ImageFiltersConfig> config);
     void updateSocketsFromParams(dai::CameraBoardSocket& left, dai::CameraBoardSocket& right, dai::CameraBoardSocket& align);
 
    private:
@@ -31,6 +33,7 @@ class StereoParamHandler : public BaseParamHandler {
     std::unordered_map<std::string, dai::StereoDepthConfig::CostMatching::DisparityWidth> disparityWidthMap;
     std::unordered_map<std::string, dai::StereoDepthConfig::PostProcessing::DecimationFilter::DecimationMode> decimationModeMap;
     std::unordered_map<std::string, dai::StereoDepthConfig::PostProcessing::TemporalFilter::PersistencyMode> temporalPersistencyMap;
+    std::unordered_map<std::string, dai::StereoDepthConfig::MedianFilter> medianFilterMap;
     dai::CameraBoardSocket alignSocket;
 };
 }  // namespace param_handlers

@@ -16,6 +16,7 @@ class ADatatype;
 class ImgFrame;
 namespace node {
 class ImageAlign;
+class ImageFilters;
 class StereoDepth;
 }  // namespace node
 }  // namespace dai
@@ -71,6 +72,7 @@ class Stereo : public BaseNode {
     void setupRectQueue(std::shared_ptr<dai::Device> device, dai::CameraFeatures& sensorInfo, std::shared_ptr<sensor_helpers::ImagePublisher> pub, bool isLeft);
     std::shared_ptr<sensor_helpers::ImagePublisher> stereoPub, leftRectPub, rightRectPub;
     std::shared_ptr<dai::node::StereoDepth> stereoCamNode;
+    std::shared_ptr<dai::node::ImageFilters> imageFiltersNode;
     std::shared_ptr<dai::node::ImageAlign> alignNode;
     dai::Platform platform;
     std::unique_ptr<RGBD> rgbdNodeLeft, rgbdNodeRight;

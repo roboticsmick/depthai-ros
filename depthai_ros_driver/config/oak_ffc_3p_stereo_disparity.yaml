@@ -38,10 +38,10 @@
       i_enable_distortion_correction: true  # Enable for radtan8 distortion model
 
       # === DEPTH PRESET ===
-      # Options: DEFAULT, HIGH_DETAIL, HIGH_ACCURACY, ROBOTICS, FACE
-      # HIGH_DETAIL: Best for dense depth maps with fine details
-      # ROBOTICS: Optimized for obstacle avoidance (more conservative)
-      i_depth_preset: HIGH_DETAIL
+      # Options: FAST_ACCURACY, DEFAULT, HIGH_DETAIL, ROBOTICS, FACE
+      # FAST_ACCURACY: Lightweight, no built-in PostProcessing (we apply our own via host filters)
+      # Note: HIGH_DETAIL enables device-side PostProcessing that conflicts with host filters
+      i_depth_preset: FAST_ACCURACY
 
       # === STEREO MATCHING ===
       i_subpixel: true                    # Enable subpixel accuracy
@@ -52,28 +52,41 @@
       i_disparity_width: "DISPARITY_96"   # DISPARITY_64 or DISPARITY_96
 
       # === CONFIDENCE & BILATERAL ===
-      i_stereo_conf_threshold: 200        # Confidence threshold (0-255), higher = fewer holes but less coverage
-      i_bilateral_sigma: 250              # Edge-preserving smoothing (0=off, max=250)
+      # Python tuning script used defaults (no confidence filter, no bilateral).
+      # Keep these low to avoid rejecting valid depth data.
+      i_stereo_conf_threshold: 15         # Confidence threshold (0-255), higher = fewer holes but less coverage
+      i_bilateral_sigma: 0                # Edge-preserving smoothing (0=off, max=250)
+
+      # === HOST-SIDE FILTERS ===
+      # When true, speckle/spatial/temporal/median filters run on the host CPU
+      # via the ImageFilters node (matching the Python tuning script behavior).
+      # When false, these filters run on-device via StereoDepthConfig PostProcessing.
+      i_use_host_filters: true
+
+      # === MEDIAN FILTER ===
+      # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5
+      i_median_filter: "KERNEL_5x5"
 
       # === SPATIAL FILTER (hole filling + smoothing) ===
       i_enable_spatial_filter: true
-      i_spatial_filter_hole_filling_radius: 2  # Hole fill radius (0-16), higher = fills larger holes
-      i_spatial_filter_alpha: 0.5              # Filter strength (0-1), higher = more smoothing
-      i_spatial_filter_delta: 20               # Step size for smoothing
-      i_spatial_filter_iterations: 1           # Number of filter passes (1-5)
+      i_spatial_filter_hole_filling_radius: 10  # Hole fill radius (0-16), higher = fills larger holes
+      i_spatial_filter_alpha: 0.5               # Filter strength (0-1), higher = more smoothing
+      i_spatial_filter_delta: 200               # Step size (scaled 25*8 for subpixel 3 fractional bits)
+      i_spatial_filter_iterations: 1            # Number of filter passes (1-5)
 
       # === TEMPORAL FILTER (uses previous frames) ===
       i_enable_temporal_filter: true
-      i_temporal_filter_alpha: 0.4             # Averaging factor (0-1), lower = more smoothing
-      i_temporal_filter_delta: 20              # Threshold for temporal consistency
+      i_temporal_filter_alpha: 0.95             # Averaging factor (0-1), lower = more smoothing
+      i_temporal_filter_delta: 240              # Threshold (scaled 30*8 for subpixel 3 fractional bits)
       # Persistency modes: PERSISTENCY_OFF, VALID_8_OUT_OF_8, VALID_2_IN_LAST_3,
       #   VALID_2_IN_LAST_4, VALID_2_OUT_OF_8, VALID_1_IN_LAST_2, VALID_1_IN_LAST_5,
       #   VALID_1_IN_LAST_8, PERSISTENCY_INDEFINITELY
-      i_temporal_filter_persistency: "VALID_2_IN_LAST_4"
+      i_temporal_filter_persistency: "PERSISTENCY_OFF"
 
       # === SPECKLE FILTER (removes isolated noise) ===
       i_enable_speckle_filter: true
-      i_speckle_filter_speckle_range: 50       # Max disparity difference in speckle (0-255)
+      i_speckle_filter_speckle_range: 200       # Max disparity difference in speckle (0-255)
+      i_speckle_filter_difference_threshold: 240 # Max diff between neighbors (scaled 30*8 for subpixel)
 
       # === THRESHOLD FILTER (depth range limits) ===
       i_enable_threshold_filter: true

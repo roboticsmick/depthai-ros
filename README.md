@@ -36,6 +36,14 @@ cd ~/  # or your preferred location
 git clone --branch kilted --recursive https://github.com/luxonis/depthai-core.git
 cd depthai-core
 
+# Install python examples 
+python3 -m venv venv
+source venv/bin/activate
+# Installs library and requirements
+python3 examples/python/install_requirements.py
+echo "export OPENBLAS_CORETYPE=ARMV8" >> ~/.bashrc && source ~/.bashrc
+
+
 # Configure with Basalt VIO support (downloads ~80 vcpkg packages - takes time)
 cmake -S . -B build \
     -DDEPTHAI_BASALT_SUPPORT=ON \
@@ -162,6 +170,7 @@ Successfully tested with:
 ## OAK-FFC-3P Custom Configuration
 
 This fork contains custom configurations for the OAK-FFC-3P with:
+
 - **CAM_A (socket 0)**: IMX577 color camera (1920x1080)
 - **CAM_B (socket 1)**: OV9782 mono camera - LEFT (1280x800)
 - **CAM_C (socket 2)**: OV9782 mono camera - RIGHT (1280x800)
@@ -174,7 +183,7 @@ This fork contains custom configurations for the OAK-FFC-3P with:
 | `oak_ffc_3p.yaml` | RGBStereo | Basic streaming (RGB + stereo + IMU) |
 | `oak_ffc_3p_sync.yaml` | RGBStereo | Hardware-synced streaming for calibration |
 | `oak_ffc_3p_rgbd.yaml` | RGBD | Depth output (use after calibration) |
-| `oak_ffc_3p_stereo_disparity.yaml` | RGBD | **Stereo disparity with basalt calibration** |
+| `oak_ffc_3p_stereo_disparity.yaml` | RGBD | **Stereo disparity with host-side filters** |
 
 ### Key Files
 
@@ -196,12 +205,14 @@ There are two ways to calibrate your OAK camera and two places calibration can b
 Calibration stored on the device EEPROM. This is the **recommended** approach.
 
 **Advantages:**
+
 - Calibration travels with the device
 - Includes proper stereo rectification matrices computed by depthai
 - Lower reprojection errors (typically <0.5 pixels)
 - No external file needed
 
 **How to use:**
+
 1. Run depthai-core calibration (see [DepthAI Calibration](#depthai-core-calibration))
 2. Flash to EEPROM using `calibration_flash.py`
 3. **Comment out** `i_external_calibration_path` in your config (or remove it)
@@ -218,11 +229,13 @@ driver:
 Calibration loaded from a JSON file at runtime. Useful for testing or when you can't flash EEPROM.
 
 **Advantages:**
+
 - Easy to swap between different calibrations
 - No EEPROM flashing required
 - Can use basalt VIO calibration
 
 **How to use:**
+
 ```yaml
 driver:
   # Uncomment ONE of these:
@@ -247,6 +260,7 @@ driver:
 ### Overview
 
 The depthai-core Python library includes calibration tools that:
+
 1. Guide you through capturing calibration images
 2. Compute intrinsics, distortion, and extrinsics
 3. Calculate proper stereo rectification matrices
@@ -261,29 +275,34 @@ pip install depthai opencv-python
 ### Calibration Steps
 
 1. **Run the calibration script:**
+
 ```bash
 cd /media/logic/USamsung/depthai-core/examples/python/Calibration
 python3 calibration.py -s 2.5 -brd OAK-FFC-3P
 ```
+
 - `-s 2.5`: Square size in cm (measure your checkerboard)
 - `-brd OAK-FFC-3P`: Board type
 
-2. **Follow the on-screen instructions** to capture images from different angles
+1. **Follow the on-screen instructions** to capture images from different angles
 
-3. **Review the results:**
-```
+2. **Review the results:**
+
+```bash
 Reprojection error (should be < 1.0):
   CAM_A: 0.23 px
   CAM_B: 0.31 px
   CAM_C: 0.28 px
 ```
 
-4. **Flash to EEPROM:**
+1. **Flash to EEPROM:**
+
 ```bash
 python3 calibration_flash.py /path/to/calibration_output.json
 ```
 
-5. **Verify the calibration:**
+1. **Verify the calibration:**
+
 ```bash
 python3 calibration_dump.py
 ```
@@ -291,11 +310,13 @@ python3 calibration_dump.py
 ### Backup and Restore
 
 The calibration file is saved to `resources/` with a timestamp:
-```
+
+```bash
 resources/14442C10B1991CD000_2025-12-12_11-50.json
 ```
 
 To restore a previous calibration:
+
 ```bash
 python3 calibration_flash.py resources/14442C10B1991CD000_2025-12-12_11-50.json
 ```
@@ -326,7 +347,8 @@ A backup of the previous EEPROM contents is automatically saved to `depthai_cali
 #### DepthAI Distortion Format
 
 DepthAI uses 14 distortion coefficients in OpenCV order:
-```
+
+```bash
 [k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4, τx, τy]
 ```
 
@@ -367,6 +389,7 @@ ros2 bag record -o calibration_recording \
 ```
 
 **Recording tips:**
+
 - Move the camera slowly in all 6 degrees of freedom
 - Include rotation around all axes
 - Record for 60-120 seconds
@@ -391,7 +414,8 @@ basalt_calibrate --dataset-path /path/to/converted/dataset \
 ```
 
 The calibration output will be saved to:
-```
+
+```bash
 /media/logic/USamsung/oak_calibration/oak_results/calibration.json
 ```
 
@@ -406,6 +430,7 @@ python3 scripts/basalt_to_depthai_calib.py \
 ```
 
 The script will output:
+
 - Calibration parameters for verification
 - Camera intrinsics (fx, fy, cx, cy)
 - Distortion coefficients (if radtan8)
@@ -413,7 +438,8 @@ The script will output:
 - Recommended config settings
 
 **Example output:**
-```
+
+```bash
 Basalt calibration info:
   Camera 0: 1280x800 (pinhole-radtan8)
     fx=903.94, fy=905.33
@@ -466,6 +492,7 @@ The conversion script assumes the default OAK-FFC-3P camera order:
 | 2 | 1280x800 | CAM_C (2) | OV9782 | Right stereo |
 
 If your cameras are in a different order, use `--swap-stereo`:
+
 ```bash
 python3 scripts/basalt_to_depthai_calib.py input.json -o output.json --swap-stereo
 ```
@@ -521,6 +548,10 @@ This ensures all cameras capture frames at exactly the same timestamp, which is 
       i_synced: true           # Sync stereo output
       i_left_rect_publish_topic: true
       i_right_rect_publish_topic: true
+      i_depth_preset: FAST_ACCURACY  # Lightweight, no device PostProcessing
+      i_use_host_filters: true       # Host-side ImageFilters node
+      i_subpixel: true
+      i_lr_check: true
 ```
 
 ---
@@ -529,26 +560,44 @@ This ensures all cameras capture frames at exactly the same timestamp, which is 
 
 The stereo depth output can be noisy with holes (invalid pixels). DepthAI provides multiple filters to produce smooth, dense depth maps suitable for RGB-D applications.
 
-### Filter Pipeline Overview
+### Host-Side vs Device-Side Filtering
 
-```
-Raw Disparity → Bilateral → Spatial → Temporal → Speckle → Threshold → Output
+Filters can run in two places:
+
+| Mode | Where | Parameter | Notes |
+|------|-------|-----------|-------|
+| **Host-side** (recommended) | CPU via `ImageFilters` node | `i_use_host_filters: true` | Matches Python tuning script behavior, full control |
+| **Device-side** | VPU via `StereoDepthConfig::PostProcessing` | `i_use_host_filters: false` | Lower CPU usage, but some presets enable conflicting filters |
+
+**Important:** Some depth presets (e.g., `HIGH_DETAIL`) enable device-side PostProcessing filters internally. If you also enable host-side filters, you get **double filtering** which produces poor results. Use `FAST_ACCURACY` preset with host-side filters to avoid this.
+
+```yaml
+# Recommended: host-side filtering with a lightweight preset
+i_use_host_filters: true
+i_depth_preset: FAST_ACCURACY
 ```
 
-Filters are applied in order. Enable the ones that best suit your needs.
+### Filter Pipeline (Host-Side)
+
+```sh
+Raw Disparity → Speckle → Temporal → Spatial → Median → Output
+```
+
+Filters are applied in order by the `ImageFilters` node on the host CPU.
 
 ### Depth Presets
 
-| Preset | Description | Best For |
-|--------|-------------|----------|
-| `DEFAULT` | Balanced quality/performance | General use |
-| `HIGH_DETAIL` | Maximum detail, dense output | Dense depth maps, 3D reconstruction |
-| `HIGH_ACCURACY` | Most accurate depth values | Measurement applications |
-| `ROBOTICS` | Conservative, reliable depth | Obstacle avoidance, navigation |
-| `FACE` | Optimized for close-range faces | Face tracking |
+| Preset | Description | Device PostProcessing | Best For |
+|--------|-------------|----------------------|----------|
+| `FAST_ACCURACY` | Lightweight, no PostProcessing | **None** | Use with host-side filters |
+| `DEFAULT` | Balanced quality/performance | Some | General use (device filters only) |
+| `HIGH_DETAIL` | Maximum detail, dense output | **Heavy** | Device-only filtering (conflicts with host filters) |
+| `HIGH_ACCURACY` | Most accurate depth values | Some | Measurement applications |
+| `ROBOTICS` | Conservative, reliable depth | Some | Obstacle avoidance, navigation |
+| `FACE` | Optimized for close-range faces | Some | Face tracking |
 
 ```yaml
-i_depth_preset: HIGH_DETAIL  # Recommended for dense depth maps
+i_depth_preset: FAST_ACCURACY  # Recommended when using host-side filters
 ```
 
 ### Stereo Matching Parameters
@@ -577,8 +626,13 @@ i_lrc_threshold: 5  # Stricter than default
 | `i_bilateral_sigma` | 0-250 | 0 | Edge-preserving smoothing (0=off, 250=max smooth) |
 
 ```yaml
-i_stereo_conf_threshold: 200  # Accept most pixels
-i_bilateral_sigma: 250        # Maximum edge-preserving smoothing
+# With host-side filters (i_use_host_filters: true):
+i_stereo_conf_threshold: 15   # Low value to accept more pixels (host filters handle noise)
+i_bilateral_sigma: 0          # Disabled (host-side filters handle smoothing)
+
+# Without host-side filters (device-only):
+i_stereo_conf_threshold: 200  # Higher value to pre-filter noise on device
+i_bilateral_sigma: 250        # Device-side edge-preserving smoothing
 ```
 
 ### Spatial Filter (Hole Filling)
@@ -641,10 +695,12 @@ Removes small isolated regions of noise.
 |-----------|-------|---------|-------------|
 | `i_enable_speckle_filter` | bool | false | Enable speckle filtering |
 | `i_speckle_filter_speckle_range` | 0-255 | 50 | Max disparity difference in connected component |
+| `i_speckle_filter_difference_threshold` | 0-255 | 50 | Max diff between neighboring pixels (scale for subpixel) |
 
 ```yaml
 i_enable_speckle_filter: true
-i_speckle_filter_speckle_range: 50
+i_speckle_filter_speckle_range: 200
+i_speckle_filter_difference_threshold: 240  # 30 * 8 for subpixel with 3 fractional bits
 ```
 
 ### Threshold Filter (Depth Range)
@@ -691,53 +747,113 @@ Reduces output resolution for performance. Uses intelligent downsampling.
 | `NON_ZERO_MEDIAN` | Median of non-zero values (best quality) |
 | `NON_ZERO_MEAN` | Mean of non-zero values |
 
+### Median Filter
+
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `i_median_filter` | string | `"MEDIAN_OFF"` | Median filter kernel size |
+
+**Options:** `MEDIAN_OFF`, `KERNEL_3x3`, `KERNEL_5x5`
+
+```yaml
+i_median_filter: "KERNEL_5x5"  # Good for removing salt-and-pepper noise
+```
+
 ### Recommended Settings for Dense Depth
 
-For smooth, hole-free depth maps to project onto RGB:
+For smooth, hole-free depth maps using **host-side filtering** (recommended):
 
 ```yaml
 stereo:
-  # Preset
-  i_depth_preset: HIGH_DETAIL
+  # Use lightweight preset to avoid double-filtering
+  i_depth_preset: FAST_ACCURACY
+  i_use_host_filters: true
 
   # Stereo matching
   i_subpixel: true
+  i_subpixel_fractional_bits: 3    # 8x scale factor for disparity values
   i_lr_check: true
   i_lrc_threshold: 5
 
-  # Confidence & smoothing
-  i_stereo_conf_threshold: 200
-  i_bilateral_sigma: 250
+  # Keep confidence/bilateral low - host filters handle quality
+  i_stereo_conf_threshold: 15
+  i_bilateral_sigma: 0
+
+  # Median filter (host-side)
+  i_median_filter: "KERNEL_5x5"
 
   # Spatial filter (hole filling)
   i_enable_spatial_filter: true
-  i_spatial_filter_hole_filling_radius: 2
+  i_spatial_filter_hole_filling_radius: 10
   i_spatial_filter_alpha: 0.5
+  i_spatial_filter_delta: 200          # 25 * 8 (scaled for subpixel 3 frac bits)
   i_spatial_filter_iterations: 1
 
   # Temporal filter (frame averaging)
   i_enable_temporal_filter: true
-  i_temporal_filter_alpha: 0.4
-  i_temporal_filter_persistency: "VALID_2_IN_LAST_4"
+  i_temporal_filter_alpha: 0.95
+  i_temporal_filter_delta: 240         # 30 * 8 (scaled for subpixel 3 frac bits)
+  i_temporal_filter_persistency: "PERSISTENCY_OFF"
 
   # Speckle filter (noise removal)
   i_enable_speckle_filter: true
-  i_speckle_filter_speckle_range: 50
+  i_speckle_filter_speckle_range: 200
+  i_speckle_filter_difference_threshold: 240  # 30 * 8 (scaled for subpixel)
 
   # Depth range
   i_enable_threshold_filter: true
-  i_threshold_filter_min_range: 200
-  i_threshold_filter_max_range: 10000
+  i_threshold_filter_min_range: 200    # 20cm minimum
+  i_threshold_filter_max_range: 10000  # 10m maximum
 ```
+
+### Subpixel Scaling for Filter Parameters
+
+When `i_subpixel: true`, disparity values are scaled by `2^fractional_bits`. Filter delta and threshold parameters must be scaled accordingly:
+
+| Fractional Bits | Scale Factor | Base Delta=25 | Base Delta=30 |
+|-----------------|-------------|---------------|---------------|
+| 3 (default) | 8x | 200 | 240 |
+| 4 | 16x | 400 | 480 |
+| 5 | 32x | 800 | 960 |
+
+Parameters that need scaling: `i_spatial_filter_delta`, `i_temporal_filter_delta`, `i_speckle_filter_difference_threshold`.
+
+Use the Python tuning script (see below) to find optimal values interactively.
 
 ### Filter Tuning Tips
 
-1. **Start with preset**: Use `HIGH_DETAIL` for dense maps, `ROBOTICS` for reliability
-2. **Enable temporal filter first**: Biggest improvement for hole-filling with minimal artifacts
-3. **Add spatial filter**: For remaining holes, increase `hole_filling_radius`
-4. **Adjust confidence**: Lower `i_stereo_conf_threshold` for more coverage (may add noise)
-5. **Fine-tune bilateral**: Higher `i_bilateral_sigma` smooths more but may blur edges
-6. **Set depth range**: Use threshold filter to remove invalid far/near values
+1. **Use host-side filters**: Set `i_use_host_filters: true` with `i_depth_preset: FAST_ACCURACY`
+2. **Keep confidence low**: With host filters, set `i_stereo_conf_threshold: 15` to let more pixels through
+3. **Disable bilateral**: Set `i_bilateral_sigma: 0` when using host-side spatial/temporal filters
+4. **Enable temporal filter first**: Biggest improvement for hole-filling with minimal artifacts
+5. **Add spatial filter**: For remaining holes, increase `i_spatial_filter_hole_filling_radius`
+6. **Scale for subpixel**: Multiply delta/threshold values by `2^fractional_bits` when subpixel is enabled
+7. **Set depth range**: Use threshold filter to remove invalid far/near values
+8. **Tune interactively**: Use the Python filter tuning script to find optimal values before setting them in YAML
+
+### Interactive Filter Tuning Script
+
+A Python script is provided for interactive filter tuning with live preview:
+
+```bash
+cd /path/to/depthai-core/examples/python/StereoDepth
+python3 set_stereo_depth_filters.py
+```
+
+**Features:**
+- Side-by-side raw vs filtered disparity view
+- Trackbar controls for all stereo and filter settings
+- Runtime toggling of subpixel, LR check, and extended disparity (no restart needed)
+- Auto-scaling of filter delta/threshold values when subpixel mode changes
+- Live settings readout panel; press 'p' to print settings to terminal
+
+**Initial mode flags (all togglable at runtime via trackbars):**
+
+```bash
+python3 set_stereo_depth_filters.py --subpixel --lr_check --lrc_threshold 5
+```
+
+Once you find good settings, copy the printed values into your ROS YAML config file.
 
 ---
 
@@ -782,34 +898,42 @@ stereo:
 ## Troubleshooting
 
 ### Disparity looks wrong or inverted
+
 ```bash
 # Re-run conversion with swapped stereo cameras
 python3 scripts/basalt_to_depthai_calib.py input.json -o output.json --swap-stereo
 ```
 
 ### No depth output
+
 - Check that `i_pipeline_type: RGBD` is set
 - Verify `i_left_socket_id` and `i_right_socket_id` match your hardware
 
 ### Distorted output
+
 - If using radtan8 calibration: ensure `i_enable_distortion_correction: true`
 - If using pinhole calibration: set `i_enable_distortion_correction: false`
 
 ### Verify calibration loaded
+
 ```bash
 ros2 param get /oak driver.i_external_calibration_path
 ```
 
 ### Topics listed but no data publishing
+
 - Ensure the driver node is running: `ros2 node list` should show `/oak`
 - Check for errors in the launch terminal
 
 ### compressedDepth errors
+
 - Normal for RGBStereo pipeline - use `/compressed` not `/compressedDepth`
 - compressedDepth only works with depth images (RGBD pipeline)
 
 ### "Model name OAK-FFC-3P not found" warning
+
 - Cosmetic only - affects URDF visualization, not camera function
 
 ### IMU extrinsics not set warning
+
 - Expected before calibration - will be resolved after applying basalt calibration
