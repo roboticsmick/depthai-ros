@@ -47,8 +47,8 @@
       i_subpixel: true                    # Enable subpixel accuracy
       i_subpixel_fractional_bits: 3       # Subpixel precision (3-5), higher = more precise
       i_lr_check: true                    # Left-right consistency check
-      i_lrc_threshold: 5                  # LR check threshold (0-10), lower = stricter
-      i_extended_disp: false              # Extended disparity for close objects
+      i_lrc_threshold: 10                 # LR check threshold (0-10), lower = stricter
+      i_extended_disp: true               # Extended disparity (doubles range for close objects, 0.3m+)
       i_disparity_width: "DISPARITY_96"   # DISPARITY_64 or DISPARITY_96
 
       # === CONFIDENCE & BILATERAL ===
@@ -69,15 +69,16 @@
 
       # === SPATIAL FILTER (hole filling + smoothing) ===
       i_enable_spatial_filter: true
-      i_spatial_filter_hole_filling_radius: 10  # Hole fill radius (0-16), higher = fills larger holes
+      i_spatial_filter_hole_filling_radius: 2   # Hole fill radius (0-16), ROBOTICS default
       i_spatial_filter_alpha: 0.5               # Filter strength (0-1), higher = more smoothing
-      i_spatial_filter_delta: 200               # Step size (scaled 25*8 for subpixel 3 fractional bits)
+      i_spatial_filter_delta: 160               # Step size (20 * 8 for subpixel 3 fractional bits)
       i_spatial_filter_iterations: 1            # Number of filter passes (1-5)
 
       # === TEMPORAL FILTER (uses previous frames) ===
-      i_enable_temporal_filter: true
-      i_temporal_filter_alpha: 0.95             # Averaging factor (0-1), lower = more smoothing
-      i_temporal_filter_delta: 240              # Threshold (scaled 30*8 for subpixel 3 fractional bits)
+      # DISABLED - ROBOTICS preset does not use temporal filtering
+      i_enable_temporal_filter: false
+      i_temporal_filter_alpha: 0.4              # Averaging factor (0-1), lower = more smoothing
+      i_temporal_filter_delta: 0                # Threshold (scaled for subpixel)
       # Persistency modes: PERSISTENCY_OFF, VALID_8_OUT_OF_8, VALID_2_IN_LAST_3,
       #   VALID_2_IN_LAST_4, VALID_2_OUT_OF_8, VALID_1_IN_LAST_2, VALID_1_IN_LAST_5,
       #   VALID_1_IN_LAST_8, PERSISTENCY_INDEFINITELY
@@ -86,11 +87,11 @@
       # === SPECKLE FILTER (removes isolated noise) ===
       i_enable_speckle_filter: true
       i_speckle_filter_speckle_range: 200       # Max disparity difference in speckle (0-255)
-      i_speckle_filter_difference_threshold: 240 # Max diff between neighbors (scaled 30*8 for subpixel)
+      i_speckle_filter_difference_threshold: 16  # Max diff between neighbors (2 * 8 for subpixel 3 frac bits)
 
       # === THRESHOLD FILTER (depth range limits) ===
       i_enable_threshold_filter: true
-      i_threshold_filter_min_range: 200        # Min depth in mm
+      i_threshold_filter_min_range: 300        # Min depth in mm (0.3m)
       i_threshold_filter_max_range: 10000      # Max depth in mm (10m)
 
       # === BRIGHTNESS FILTER (filter by source image brightness) ===
