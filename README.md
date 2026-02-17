@@ -1,8 +1,16 @@
-# Depthai ROS Repository
+# DepthAI ROS2 Jazzy — OAK-FFC-3P
 
-Hi and welcome to the main depthai-ros respository! Here you can find ROS related code for OAK cameras from Luxonis. Don't have one? You can get them [here!](https://shop.luxonis.com/)
+Fork of [depthai-ros](https://github.com/luxonis/depthai-ros) (`kilted` branch) targeting **ROS2 Jazzy LTS** on the **Luxonis OAK-FFC-3P** camera module:
 
-You can find the newest documentation [here](https://docs.luxonis.com/software-v3/depthai/ros/depthai-ros/)
+- **IMX577** color sensor (1920x1080)
+- **2x OV9282** global shutter mono sensors (1280x800) — stereo pair
+- **BMI270** IMU
+
+![depthai-ros Jazzy Stereo Preview](assets/depthai-ros_stereo_jazzy.png)
+
+Goals: stereo depth with host-side filtering, point cloud generation, Basalt VIO integration, and AI inference (YOLO).
+
+Upstream docs: [docs.luxonis.com/software-v3/depthai/ros](https://docs.luxonis.com/software-v3/depthai/ros/depthai-ros/)
 
 ---
 
@@ -527,31 +535,40 @@ This ensures all cameras capture frames at exactly the same timestamp, which is 
 ```yaml
 /oak:
   ros__parameters:
-    driver:
-      # === CALIBRATION SOURCE ===
-      # Option 1: EEPROM (recommended) - comment out i_external_calibration_path
-      # Option 2: External file - uncomment ONE of these:
-      # i_external_calibration_path: '/path/to/oak_ffc_3p_depthai_calib.json'
-      # i_external_calibration_path: '/path/to/oak_ffc_3p_basalt_calib.json'
-
     pipeline_gen:
       i_pipeline_type: RGBD
-      i_enable_sync: true      # Enable hardware synchronization
+      i_enable_sync: true
       i_enable_imu: true
-
-    rgb:
-      i_synced: true           # Sync RGB with stereo pair
 
     stereo:
       i_output_disparity: true
-      i_enable_distortion_correction: true  # Enable for lens distortion
-      i_synced: true           # Sync stereo output
-      i_left_rect_publish_topic: true
-      i_right_rect_publish_topic: true
-      i_depth_preset: FAST_ACCURACY  # Lightweight, no device PostProcessing
-      i_use_host_filters: true       # Host-side ImageFilters node
+      i_enable_distortion_correction: true
+      i_depth_preset: FAST_ACCURACY     # No device PostProcessing (avoids double-filtering)
+      i_use_host_filters: true          # Host-side ImageFilters node
+
+      # Stereo matching (ROBOTICS-based settings)
       i_subpixel: true
+      i_subpixel_fractional_bits: 3     # 8x disparity scale
       i_lr_check: true
+      i_lrc_threshold: 10
+      i_extended_disp: true             # Close-range depth (0.3m+)
+      i_stereo_conf_threshold: 15
+      i_bilateral_sigma: 0
+
+      # Host-side filters
+      i_median_filter: "KERNEL_5x5"
+      i_enable_speckle_filter: true
+      i_speckle_filter_speckle_range: 200
+      i_speckle_filter_difference_threshold: 16   # 2 * 8 (subpixel scaled)
+      i_enable_spatial_filter: true
+      i_spatial_filter_hole_filling_radius: 2
+      i_spatial_filter_alpha: 0.5
+      i_spatial_filter_delta: 160                  # 20 * 8 (subpixel scaled)
+      i_spatial_filter_iterations: 1
+      i_enable_temporal_filter: false
+      i_enable_threshold_filter: true
+      i_threshold_filter_min_range: 300            # 0.3m
+      i_threshold_filter_max_range: 10000          # 10m
 ```
 
 ---
@@ -613,9 +630,10 @@ i_depth_preset: FAST_ACCURACY  # Recommended when using host-side filters
 
 ```yaml
 i_subpixel: true
-i_subpixel_fractional_bits: 3
+i_subpixel_fractional_bits: 3    # 8x disparity scale
 i_lr_check: true
-i_lrc_threshold: 5  # Stricter than default
+i_lrc_threshold: 10              # FAST_DENSITY base value
+i_extended_disp: true            # Enables close-range depth (0.3m+)
 ```
 
 ### Confidence & Bilateral Filter
@@ -651,40 +669,29 @@ Fills holes by looking at neighboring valid pixels. **Essential for dense depth 
 i_enable_spatial_filter: true
 i_spatial_filter_hole_filling_radius: 2
 i_spatial_filter_alpha: 0.5
-i_spatial_filter_delta: 20
+i_spatial_filter_delta: 160    # 20 * 8 (scaled for subpixel 3 frac bits)
 i_spatial_filter_iterations: 1
 ```
 
 ### Temporal Filter (Frame Averaging)
 
-Uses previous frames to fill holes and reduce flickering. **Highly recommended for smooth output.**
+Uses previous frames to fill holes and reduce flickering. Adds latency. Disabled in the ROBOTICS preset — enable only if you need smoother output and can tolerate the delay.
 
 | Parameter | Range | Default | Description |
 |-----------|-------|---------|-------------|
 | `i_enable_temporal_filter` | bool | false | Enable temporal filtering |
 | `i_temporal_filter_alpha` | 0.0-1.0 | 0.4 | Averaging weight (lower = more smoothing, more latency) |
-| `i_temporal_filter_delta` | int | 20 | Temporal consistency threshold |
+| `i_temporal_filter_delta` | int | 20 | Temporal consistency threshold (scale for subpixel) |
 | `i_temporal_filter_persistency` | string | VALID_2_IN_LAST_4 | How long to persist values |
 
-**Persistency Modes:**
-
-| Mode | Description |
-|------|-------------|
-| `PERSISTENCY_OFF` | No persistence |
-| `VALID_8_OUT_OF_8` | Strictest - value must be valid in all 8 frames |
-| `VALID_2_IN_LAST_3` | Value valid in 2 of last 3 frames |
-| `VALID_2_IN_LAST_4` | Value valid in 2 of last 4 frames (good balance) |
-| `VALID_2_OUT_OF_8` | Value valid in 2 of 8 frames |
-| `VALID_1_IN_LAST_2` | Value valid in 1 of last 2 frames |
-| `VALID_1_IN_LAST_5` | Value valid in 1 of last 5 frames |
-| `VALID_1_IN_LAST_8` | Very permissive |
-| `PERSISTENCY_INDEFINITELY` | Keep last valid value forever |
+**Persistency Modes:** `PERSISTENCY_OFF`, `VALID_8_OUT_OF_8`, `VALID_2_IN_LAST_3`, `VALID_2_IN_LAST_4`, `VALID_2_OUT_OF_8`, `VALID_1_IN_LAST_2`, `VALID_1_IN_LAST_5`, `VALID_1_IN_LAST_8`, `PERSISTENCY_INDEFINITELY`
 
 ```yaml
+# Optional - disabled by default (ROBOTICS preset does not use temporal)
 i_enable_temporal_filter: true
 i_temporal_filter_alpha: 0.4
-i_temporal_filter_delta: 20
-i_temporal_filter_persistency: "VALID_2_IN_LAST_4"
+i_temporal_filter_delta: 160    # 20 * 8 (scaled for subpixel 3 frac bits)
+i_temporal_filter_persistency: "PERSISTENCY_OFF"
 ```
 
 ### Speckle Filter (Noise Removal)
@@ -700,7 +707,7 @@ Removes small isolated regions of noise.
 ```yaml
 i_enable_speckle_filter: true
 i_speckle_filter_speckle_range: 200
-i_speckle_filter_difference_threshold: 240  # 30 * 8 for subpixel with 3 fractional bits
+i_speckle_filter_difference_threshold: 16   # 2 * 8 (scaled for subpixel 3 frac bits)
 ```
 
 ### Threshold Filter (Depth Range)
@@ -715,7 +722,7 @@ Limits depth output to a specific range. **Important for removing invalid far/ne
 
 ```yaml
 i_enable_threshold_filter: true
-i_threshold_filter_min_range: 200    # 20cm minimum
+i_threshold_filter_min_range: 300    # 0.3m minimum
 i_threshold_filter_max_range: 10000  # 10m maximum
 ```
 
@@ -759,85 +766,77 @@ Reduces output resolution for performance. Uses intelligent downsampling.
 i_median_filter: "KERNEL_5x5"  # Good for removing salt-and-pepper noise
 ```
 
-### Recommended Settings for Dense Depth
+### Recommended Settings (ROBOTICS-Based, Navigation)
 
-For smooth, hole-free depth maps using **host-side filtering** (recommended):
+Tuned for low-noise depth suitable for robotics navigation. Based on the ROBOTICS depth preset values, adapted for host-side filtering. These are the values in `oak_ffc_3p_stereo_disparity.yaml`.
 
 ```yaml
 stereo:
-  # Use lightweight preset to avoid double-filtering
-  i_depth_preset: FAST_ACCURACY
+  i_depth_preset: FAST_ACCURACY        # No device PostProcessing (avoids double-filtering)
   i_use_host_filters: true
 
   # Stereo matching
   i_subpixel: true
-  i_subpixel_fractional_bits: 3    # 8x scale factor for disparity values
+  i_subpixel_fractional_bits: 3        # 8x disparity scale
   i_lr_check: true
-  i_lrc_threshold: 5
+  i_lrc_threshold: 10                  # FAST_DENSITY base value
+  i_extended_disp: true                # Close-range depth (0.3m+)
+  i_stereo_conf_threshold: 15          # Low — let host filters handle noise
+  i_bilateral_sigma: 0                 # Disabled — host filters handle smoothing
 
-  # Keep confidence/bilateral low - host filters handle quality
-  i_stereo_conf_threshold: 15
-  i_bilateral_sigma: 0
-
-  # Median filter (host-side)
-  i_median_filter: "KERNEL_5x5"
-
-  # Spatial filter (hole filling)
-  i_enable_spatial_filter: true
-  i_spatial_filter_hole_filling_radius: 10
-  i_spatial_filter_alpha: 0.5
-  i_spatial_filter_delta: 200          # 25 * 8 (scaled for subpixel 3 frac bits)
-  i_spatial_filter_iterations: 1
-
-  # Temporal filter (frame averaging)
-  i_enable_temporal_filter: true
-  i_temporal_filter_alpha: 0.95
-  i_temporal_filter_delta: 240         # 30 * 8 (scaled for subpixel 3 frac bits)
-  i_temporal_filter_persistency: "PERSISTENCY_OFF"
+  # Median filter
+  i_median_filter: "KERNEL_5x5"        # ROBOTICS uses 7x7 device-side, 5x5 is host-side max
 
   # Speckle filter (noise removal)
   i_enable_speckle_filter: true
   i_speckle_filter_speckle_range: 200
-  i_speckle_filter_difference_threshold: 240  # 30 * 8 (scaled for subpixel)
+  i_speckle_filter_difference_threshold: 16   # 2 * 8 (subpixel scaled)
+
+  # Spatial filter (hole filling)
+  i_enable_spatial_filter: true
+  i_spatial_filter_hole_filling_radius: 2
+  i_spatial_filter_alpha: 0.5
+  i_spatial_filter_delta: 160                  # 20 * 8 (subpixel scaled)
+  i_spatial_filter_iterations: 1
+
+  # Temporal filter — DISABLED (ROBOTICS preset does not use temporal)
+  i_enable_temporal_filter: false
 
   # Depth range
   i_enable_threshold_filter: true
-  i_threshold_filter_min_range: 200    # 20cm minimum
+  i_threshold_filter_min_range: 300    # 0.3m minimum
   i_threshold_filter_max_range: 10000  # 10m maximum
 ```
 
 ### Subpixel Scaling for Filter Parameters
 
-When `i_subpixel: true`, disparity values are scaled by `2^fractional_bits`. Filter delta and threshold parameters must be scaled accordingly:
+When `i_subpixel: true`, disparity values are scaled by `2^fractional_bits`. Filter delta/threshold parameters must be scaled accordingly:
 
-| Fractional Bits | Scale Factor | Base Delta=25 | Base Delta=30 |
-|-----------------|-------------|---------------|---------------|
-| 3 (default) | 8x | 200 | 240 |
-| 4 | 16x | 400 | 480 |
-| 5 | 32x | 800 | 960 |
+| Fractional Bits | Scale Factor | Base Delta = 2 | Base Delta = 20 |
+| --------------- | ------------ | -------------- | --------------- |
+| 3 (default) | 8x | 16 | 160 |
+| 4 | 16x | 32 | 320 |
+| 5 | 32x | 64 | 640 |
 
 Parameters that need scaling: `i_spatial_filter_delta`, `i_temporal_filter_delta`, `i_speckle_filter_difference_threshold`.
 
-Use the Python tuning script (see below) to find optimal values interactively.
-
 ### Filter Tuning Tips
 
-1. **Use host-side filters**: Set `i_use_host_filters: true` with `i_depth_preset: FAST_ACCURACY`
-2. **Keep confidence low**: With host filters, set `i_stereo_conf_threshold: 15` to let more pixels through
-3. **Disable bilateral**: Set `i_bilateral_sigma: 0` when using host-side spatial/temporal filters
-4. **Enable temporal filter first**: Biggest improvement for hole-filling with minimal artifacts
-5. **Add spatial filter**: For remaining holes, increase `i_spatial_filter_hole_filling_radius`
-6. **Scale for subpixel**: Multiply delta/threshold values by `2^fractional_bits` when subpixel is enabled
-7. **Set depth range**: Use threshold filter to remove invalid far/near values
-8. **Tune interactively**: Use the Python filter tuning script to find optimal values before setting them in YAML
+1. **Use host-side filters**: `i_use_host_filters: true` with `i_depth_preset: FAST_ACCURACY` to avoid double-filtering
+2. **Keep confidence low**: `i_stereo_conf_threshold: 15` lets more pixels through — host filters handle noise
+3. **Disable bilateral**: `i_bilateral_sigma: 0` when using host-side spatial filters
+4. **Enable extended disparity**: `i_extended_disp: true` for close-range depth (0.3m+)
+5. **Scale for subpixel**: Delta/threshold values must be multiplied by `2^fractional_bits` when subpixel is enabled
+6. **Set depth range**: Use threshold filter to remove invalid far/near values
+7. **Tune interactively**: Use the Python filter tuning script to find optimal values before setting them in YAML
 
 ### Interactive Filter Tuning Script
 
-A Python script is provided for interactive filter tuning with live preview:
+A Python script (`depthai-core/examples/python/StereoDepth/set_stereo_depth_filters.py`) provides interactive filter tuning with live preview. The DEFAULTS in the script match the ROBOTICS-based settings above.
 
 ```bash
 cd /path/to/depthai-core/examples/python/StereoDepth
-python3 set_stereo_depth_filters.py
+python3 set_stereo_depth_filters.py --display_scale 0.5
 ```
 
 **Features:**
@@ -845,13 +844,8 @@ python3 set_stereo_depth_filters.py
 - Trackbar controls for all stereo and filter settings
 - Runtime toggling of subpixel, LR check, and extended disparity (no restart needed)
 - Auto-scaling of filter delta/threshold values when subpixel mode changes
-- Live settings readout panel; press 'p' to print settings to terminal
-
-**Initial mode flags (all togglable at runtime via trackbars):**
-
-```bash
-python3 set_stereo_depth_filters.py --subpixel --lr_check --lrc_threshold 5
-```
+- Color-coded settings panel: yellow = affects both images, cyan = filtered only
+- Press 'p' to print current settings to terminal
 
 Once you find good settings, copy the printed values into your ROS YAML config file.
 
