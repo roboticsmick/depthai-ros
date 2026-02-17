@@ -189,7 +189,8 @@ This fork contains custom configurations for the OAK-FFC-3P with:
 | Config File | Pipeline | Use Case |
 |-------------|----------|----------|
 | `oak_ffc_3p.yaml` | RGBStereo | Basic streaming (RGB + stereo + IMU) |
-| `oak_ffc_3p_sync.yaml` | RGBStereo | Hardware-synced streaming for calibration |
+| `oak_ffc_3p_sync.yaml` | RGBStereo | Hardware-synced 3-camera streaming for camera calibration |
+| `oak_ffc_3p_stereo_imu.yaml` | Stereo | **Stereo-only + IMU for IMU calibration** (higher FPS) |
 | `oak_ffc_3p_rgbd.yaml` | RGBD | Depth output (use after calibration) |
 | `oak_ffc_3p_stereo_disparity.yaml` | RGBD | **Stereo disparity with host-side filters** |
 
@@ -374,10 +375,14 @@ The conversion script automatically maps basalt's radtan8 coefficients to this f
 
 ### Step 1: Record Calibration Data
 
-Use the hardware-synced config to ensure all cameras capture at the same timestamp:
+Two separate recordings are needed: one for camera calibration (all 3 cameras) and one for IMU calibration (stereo-only, higher FPS).
+
+#### Recording A: Camera Calibration (3 cameras + IMU)
+
+Use the hardware-synced 3-camera config. Move the **AprilGrid board** in front of a stationary camera, covering all image regions at varying distances and angles.
 
 ```bash
-# Terminal 1: Start the driver with sync config
+# Terminal 1: Start the driver with 3-camera sync config
 cd /media/logic/USamsung/dai_ws
 source install/setup.bash
 ros2 launch depthai_ros_driver driver.launch.py \
@@ -386,46 +391,52 @@ ros2 launch depthai_ros_driver driver.launch.py \
 ```
 
 ```bash
-# Terminal 2: Record the bag file
+# Terminal 2: Record all 3 cameras + IMU
+cd /media/logic/USamsung/oak_calibration
+source /opt/ros/jazzy/setup.bash
+ros2 bag record -o cam_calibration \
+  /oak/left/image_raw \
+  /oak/rgb/image_raw \
+  /oak/right/image_raw \
+  /oak/imu/data
+```
+
+**Tips:** 30-60 seconds, slow smooth movements, cover all corners with the AprilGrid, vary distance.
+
+#### Recording B: IMU Calibration (stereo-only + IMU)
+
+Use the stereo-only config — this disables the RGB camera, freeing USB bandwidth so the stereo pair runs at 30 fps instead of ~4.5 fps. Mount the **AprilGrid on a wall** and **move the camera rig** dynamically.
+
+```bash
+# Terminal 1: Start the driver with stereo-only config
 cd /media/logic/USamsung/dai_ws
 source install/setup.bash
-ros2 bag record -o calibration_recording \
-  /oak/rgb/image_raw \
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_imu.yaml \
+  camera_model:=OAK-FFC-3P
+```
+
+```bash
+# Terminal 2: Record stereo + IMU only
+cd /media/logic/USamsung/oak_calibration
+source /opt/ros/jazzy/setup.bash
+ros2 bag record -o imu_calibration \
   /oak/left/image_raw \
   /oak/right/image_raw \
   /oak/imu/data
 ```
 
-**Recording tips:**
+**Tips:** 60-90 seconds, rotate around all 3 axes (pitch, yaw, roll), keep AprilGrid visible in both cameras, hold still 2-3 seconds at start and end.
 
-- Move the camera slowly in all 6 degrees of freedom
-- Include rotation around all axes
-- Record for 60-120 seconds
-- Use a calibration target (checkerboard/AprilGrid) for better results
+**Why two recordings?** The 3-camera config (all BGR8) saturates USB bandwidth, limiting camera FPS to ~4.5 fps. IMU calibration needs higher camera rates (15-30 fps) to properly constrain the time alignment and motion model. The stereo-only config drops the RGB camera, allowing the stereo pair to reach 30 fps.
 
 ### Step 2: Run Basalt Calibration
 
-Convert ROS2 bag to Basalt format and run calibration:
+See the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros2) for detailed calibration steps. The workflow is:
 
-```bash
-# For cameras with lens distortion (recommended)
-basalt_calibrate --dataset-path /path/to/converted/dataset \
-  --dataset-type euroc \
-  --result-path /media/logic/USamsung/oak_calibration/oak_results \
-  --cam-types pinhole-radtan8 pinhole-radtan8 pinhole-radtan8
-
-# For minimal distortion cameras
-basalt_calibrate --dataset-path /path/to/converted/dataset \
-  --dataset-type euroc \
-  --result-path /media/logic/USamsung/oak_calibration/oak_results \
-  --cam-types pinhole pinhole pinhole
-```
-
-The calibration output will be saved to:
-
-```bash
-/media/logic/USamsung/oak_calibration/oak_results/calibration.json
-```
+1. **Camera calibration** — run `basalt_calibrate` on Recording A (3 cameras) with `--cam-types pinhole-radtan8 ds pinhole-radtan8`
+2. **Stereo camera calibration** — run `basalt_calibrate` on Recording B (stereo-only) with `--cam-types pinhole-radtan8 pinhole-radtan8`
+3. **IMU calibration** — run `basalt_calibrate_imu` on Recording B (stereo-only) with the stereo calibration result
 
 ### Step 3: Convert Calibration to DepthAI Format
 
