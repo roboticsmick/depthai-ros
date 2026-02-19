@@ -1,0 +1,87 @@
+# OAK-FFC-3P Basalt VIO Configuration
+# Stereo + IMU → Visual-Inertial Odometry
+#
+# Calibration source: stereo_imu_calibration_results/calibration.json
+# Camera: OAK-FFC-3P with OV9282 stereo (CAM_B/CAM_C) + BMI270 IMU
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: Stereo
+      i_enable_imu: true
+      i_enable_vio: true
+
+    # === VIO NODE SETTINGS ===
+    vio:
+      # --- Resolution & FPS ---
+      # VIO uses lower resolution than stereo depth for speed
+      i_width: 640
+      i_height: 400
+      i_fps: 60.0
+      i_board_socket_id: 1  # CAM_B (left OV9282)
+
+      # --- IMU ---
+      i_imu_update_rate: 400  # BMI270 max rate
+
+      # --- IMU Extrinsics (T_imu_cam[0] from Basalt calibration) ---
+      # Transform from IMU to left camera frame
+      i_override_imu_extrinsics: true
+      i_imu_extr_x: -0.061409340773537619
+      i_imu_extr_y: 0.052009437125282959
+      i_imu_extr_z: -0.01408594567155951
+      i_imu_extr_qx: 0.49978286617904008
+      i_imu_extr_qy: -0.5027659780640653
+      i_imu_extr_qz: -0.5007287704258576
+      i_imu_extr_qw: 0.49670328813382788
+
+      # --- Accelerometer Bias (9-element Basalt format from calib_accel_bias) ---
+      # Format: [b_x, b_y, b_z, s1, s2, s3, s4, s5, s6]
+      i_set_acc_bias: true
+      i_acc_bias: [1.7551297205505288, 0.13549662999103519, -0.10387422832059688,
+                   0.00008330762953156286, 0.0000057108229485075309, 0.00002305400408125457,
+                   -0.00005815733711713035, 0.00026820041781779275, -0.000003959719132717111]
+
+      # --- Gyroscope Bias (12-element vector from calib_gyro_bias) ---
+      # Format: [b_x, b_y, b_z, s1..s9] (full 3x3 scale matrix, column-major)
+      i_set_gyro_bias: true
+      i_gyro_bias: [0.0017533344769401496, -0.001566063358788915, -0.0006372898046244716,
+                    0.00005397485991596637, 0.0000048686858679756359, 0.000001848503523484684,
+                    -0.00001524400445348047, 0.000034649006279934928, -0.000013906028441460435,
+                    0.0000024479718214005174, -0.000002739126215133143, 0.00003687581130193044]
+
+      # --- IMU Noise Parameters (BMI270 datasheet values) ---
+      i_set_acc_noise_std: true
+      i_acc_noise_std: [0.02, 0.02, 0.02]
+
+      i_set_gyro_noise_std: true
+      i_gyro_noise_std: [0.0005, 0.0005, 0.0005]
+
+      # --- TF Publishing ---
+      i_publish_tf: true
+      i_frame_id: "odom"
+      i_child_frame_id: "oak_parent_frame"
+
+    # === STEREO (for depth — runs alongside VIO) ===
+    stereo:
+      i_depth_preset: DEFAULT
+      i_fps: 60.0
+      i_left_socket_id: 1   # CAM_B
+      i_right_socket_id: 2  # CAM_C
+
+    # === LEFT/RIGHT CAMERA EXPOSURE ===
+    left:
+      r_set_man_exposure: false
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000
+
+    right:
+      r_set_man_exposure: false
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000
+
+    # === IMU ===
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 400
+      i_gyro_freq: 400

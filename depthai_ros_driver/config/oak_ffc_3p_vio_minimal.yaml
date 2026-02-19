@@ -1,0 +1,22 @@
+# Minimal VIO test — no calibration overrides
+# If this crashes too, the issue is BasaltVIO itself, not calibration values
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: Stereo
+      i_enable_imu: true
+      i_enable_vio: true
+
+    vio:
+      i_width: 640
+      i_height: 400
+      i_fps: 60.0
+
+    stereo:
+      i_depth_preset: DEFAULT
+      i_fps: 60.0
+
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
