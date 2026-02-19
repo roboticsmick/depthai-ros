@@ -1,0 +1,42 @@
+# OAK-FFC-3P RGB-Only Configuration
+# Outputs: RGB images at 4K (3840x2160) at 2 FPS
+# Camera: CAM_A - IMX577 (socket 0)
+# Usage:
+#   ros2 launch depthai_ros_driver driver.launch.py \
+#     params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_rgb_only.yaml \
+#     camera_model:=OAK-FFC-3P
+/oak:
+  ros__parameters:
+    # === CALIBRATION SOURCE ===
+    # By default, uses EEPROM calibration (recommended).
+    # To use external file instead, uncomment the driver section below:
+    # driver:
+    #   i_external_calibration_path: '$DEV_HOME/depthai-core/examples/python/Calibration/OAK-FFC-3P-HQ83-RGB-ONLY.json'
+
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: RGB
+      i_enable_imu: false
+
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0  # CAM_A - IMX577
+      i_fps: 2.0
+      i_width: 3840
+      i_height: 2160
+
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      # Manual mode defaults (activate by setting r_set_man_exposure: true)
+      r_exposure: 6000                  # Manual exposure time in microseconds
+      r_iso: 800                        # Manual ISO (100-1600)

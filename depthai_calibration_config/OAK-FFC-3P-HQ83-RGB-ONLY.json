@@ -1,0 +1,14 @@
+{
+    "board_config": {
+        "name": "OAK-FCC-3P-RGB-ONLY",
+        "revision": "R3M0E3",
+        "cameras": {
+            "CAM_A": {
+                "model": "IMX577",
+                "name": "middle",
+                "hfov": 83.6,
+                "type": "color"
+            }
+        }
+    }
+}

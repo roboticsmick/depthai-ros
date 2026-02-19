@@ -1,0 +1,58 @@
+{
+    "board_config":
+    {
+        "name": "OAK-FFC-3P",
+        "revision": "R3M0E3",
+        "cameras":{
+            "CAM_C": {
+  "model":"OV9782",
+                "name": "right",
+                "hfov": 75,
+                "type": "mono",
+                "extrinsics": {
+                    "to_cam": "CAM_B",
+                    "specTranslation": {
+                        "x": 9,
+                        "y": 0,
+                        "z": 0
+                    },
+                    "rotation":{
+                        "r": 0,
+                        "p": 0,
+                        "y": 0
+                    }
+                }
+            },
+            "CAM_B": {
+  "model":"OV9782",
+                "name": "left",
+                "hfov": 75,
+                "type": "mono",
+                "extrinsics": {
+                    "to_cam": "CAM_A",
+                    "specTranslation": {
+                        "x": 0,
+                        "y": -7.01,
+                        "z": 0
+                    },
+                    "rotation":{
+                        "r": 0,
+                        "p": 0,
+                        "y": 0
+                    }
+                }
+            },
+            "CAM_A": {
+  "model": "IMX577",
+                "name": "middle",
+                "hfov": 113,
+                "type": "color"
+            }
+
+        },
+        "stereo_config":{
+            "left_cam": "CAM_B",
+            "right_cam": "CAM_C"
+        }
+    }
+}

@@ -20,6 +20,14 @@ Upstream docs: [docs.luxonis.com/software-v3/depthai/ros](https://docs.luxonis.c
 >
 > **The fix:** Build depthai-core from source instead of using the pre-built binary.
 
+**Path convention:** This guide uses `$DEV_HOME` to refer to your development workspace root. Set it in your `~/.bashrc`:
+
+```bash
+export DEV_HOME="/path/to/your/workspace"  # e.g. ~/ or /media/user/nvme
+```
+
+All workspace paths below use `$DEV_HOME/ros2_ws`. If you keep your workspace at `~/ros2_ws`, set `DEV_HOME` to your home directory or substitute accordingly.
+
 ### Prerequisites
 
 ```bash
@@ -81,8 +89,8 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ```bash
 # Create workspace
-mkdir -p ~/dai_ws/src
-cd ~/dai_ws/src
+mkdir -p $DEV_HOME/ros2_ws/src
+cd $DEV_HOME/ros2_ws/src
 
 # Clone depthai-ros (kilted branch for Jazzy)
 git clone --branch kilted https://github.com/luxonis/depthai-ros.git
@@ -91,7 +99,7 @@ git clone --branch kilted https://github.com/luxonis/depthai-ros.git
 ### Step 4: Install ROS Dependencies
 
 ```bash
-cd ~/dai_ws
+cd $DEV_HOME/ros2_ws
 sudo rosdep init  # Skip if already initialized
 rosdep update
 rosdep install --from-paths src --ignore-src -r -y
@@ -100,7 +108,7 @@ rosdep install --from-paths src --ignore-src -r -y
 ### Step 5: Build depthai-ros
 
 ```bash
-cd ~/dai_ws
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash
 
 # Build with CMAKE_PREFIX_PATH to find depthai-core in /usr/local
@@ -112,13 +120,13 @@ colcon build --parallel-workers 1
 ### Step 6: Source the Workspace
 
 ```bash
-source ~/dai_ws/install/setup.bash
+source $DEV_HOME/ros2_ws/install/setup.bash
 ```
 
 Add to your `.bashrc` for persistence:
 
 ```bash
-echo "source ~/dai_ws/install/setup.bash" >> ~/.bashrc
+echo "source $DEV_HOME/ros2_ws/install/setup.bash" >> ~/.bashrc
 ```
 
 ### Step 7: Verify Installation
@@ -193,6 +201,8 @@ This fork contains custom configurations for the OAK-FFC-3P with:
 | `oak_ffc_3p_stereo_imu.yaml` | Stereo | **Stereo-only + IMU for IMU calibration** (higher FPS) |
 | `oak_ffc_3p_rgbd.yaml` | RGBD | Depth output (use after calibration) |
 | `oak_ffc_3p_stereo_disparity.yaml` | RGBD | **Stereo disparity with host-side filters** |
+| `oak_ffc_3p_rgb_only.yaml` | RGB | **RGB-only 4K recording at 2 FPS** |
+| `oak_ffc_3p_rgb_yolo.yaml` | RGB | **RGB 4K recording + YOLO detection at 2 FPS** |
 
 ### Key Files
 
@@ -286,7 +296,7 @@ pip install depthai opencv-python
 1. **Run the calibration script:**
 
 ```bash
-cd /media/logic/USamsung/depthai-core/examples/python/Calibration
+cd $DEV_HOME/depthai-core/examples/python/Calibration
 python3 calibration.py -s 2.5 -brd OAK-FFC-3P
 ```
 
@@ -375,41 +385,17 @@ The conversion script automatically maps basalt's radtan8 coefficients to this f
 
 ### Step 1: Record Calibration Data
 
-Two separate recordings are needed: one for camera calibration (all 3 cameras) and one for IMU calibration (stereo-only, higher FPS).
+Two separate recordings are needed. The stereo + IMU recording must be at high FPS for accurate IMU calibration; the 3-camera recording calibrates the RGB camera relative to the stereo pair (low FPS is fine for static geometry).
 
-#### Recording A: Camera Calibration (3 cameras + IMU)
+For the full calibration workflow (what to do with these recordings), see the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros2).
 
-Use the hardware-synced 3-camera config. Move the **AprilGrid board** in front of a stationary camera, covering all image regions at varying distances and angles.
+#### Recording 1: Stereo + IMU (for VIO)
 
-```bash
-# Terminal 1: Start the driver with 3-camera sync config
-cd /media/logic/USamsung/dai_ws
-source install/setup.bash
-ros2 launch depthai_ros_driver driver.launch.py \
-  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_sync.yaml \
-  camera_model:=OAK-FFC-3P
-```
+Use the stereo-only config (30 fps). Mount the **AprilGrid on a wall** and **move the camera rig** dynamically. This single recording is used for both stereo camera calibration and IMU calibration.
 
 ```bash
-# Terminal 2: Record all 3 cameras + IMU
-cd /media/logic/USamsung/oak_calibration
-source /opt/ros/jazzy/setup.bash
-ros2 bag record -o cam_calibration \
-  /oak/left/image_raw \
-  /oak/rgb/image_raw \
-  /oak/right/image_raw \
-  /oak/imu/data
-```
-
-**Tips:** 30-60 seconds, slow smooth movements, cover all corners with the AprilGrid, vary distance.
-
-#### Recording B: IMU Calibration (stereo-only + IMU)
-
-Use the stereo-only config — this disables the RGB camera, freeing USB bandwidth so the stereo pair runs at 30 fps instead of ~4.5 fps. Mount the **AprilGrid on a wall** and **move the camera rig** dynamically.
-
-```bash
-# Terminal 1: Start the driver with stereo-only config
-cd /media/logic/USamsung/dai_ws
+# Terminal 1: Stereo-only driver
+cd $DEV_HOME/ros2_ws
 source install/setup.bash
 ros2 launch depthai_ros_driver driver.launch.py \
   params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_imu.yaml \
@@ -417,34 +403,130 @@ ros2 launch depthai_ros_driver driver.launch.py \
 ```
 
 ```bash
-# Terminal 2: Record stereo + IMU only
-cd /media/logic/USamsung/oak_calibration
+# Terminal 2: Record stereo + IMU (60-90 seconds)
+cd $DEV_HOME/basalt_calibration
 source /opt/ros/jazzy/setup.bash
-ros2 bag record -o imu_calibration \
+ros2 bag record -o stereo_imu_calibration_record \
   /oak/left/image_raw \
   /oak/right/image_raw \
   /oak/imu/data
 ```
 
-**Tips:** 60-90 seconds, rotate around all 3 axes (pitch, yaw, roll), keep AprilGrid visible in both cameras, hold still 2-3 seconds at start and end.
+#### YAML Settings for Stereo + IMU
 
-**Why two recordings?** The 3-camera config (all BGR8) saturates USB bandwidth, limiting camera FPS to ~4.5 fps. IMU calibration needs higher camera rates (15-30 fps) to properly constrain the time alignment and motion model. The stereo-only config drops the RGB camera, allowing the stereo pair to reach 30 fps.
+```yaml
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: Stereo
+      i_enable_imu: true
+    left:
+      i_publish_topic: true
+      i_board_socket_id: 1  # CAM_B - OV9782
+      i_fps: 30.0
+      i_width: 1280
+      i_height: 800
+      i_synced: true
+    right:
+      i_publish_topic: true
+      i_board_socket_id: 2  # CAM_C - OV9782
+      i_fps: 30.0
+      i_width: 1280
+      i_height: 800
+      i_synced: true
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 200
+      i_gyro_freq: 200
+      i_sync_method: "LINEAR_INTERPOLATE_ACCEL"
+```
+
+**Tips:** Hold still 2-3s at start/end, rotate around all 3 axes, keep AprilGrid visible in both cameras, gyroscope should reach 1-5 rad/s.
+
+#### Recording 2: RGB + Stereo + IMU (for RGB extrinsics)
+
+Use the hardware-synced 3-camera config (~4.5 fps). Mount camera on tripod, move the **AprilGrid board** slowly in front of the cameras. IMU is included for reference but not used for calibration here.
+
+```bash
+# Terminal 1: 3-camera sync driver
+cd $DEV_HOME/ros2_ws
+source install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_sync.yaml \
+  camera_model:=OAK-FFC-3P
+```
+
+```bash
+# Terminal 2: Record all 3 cameras + IMU (30-60 seconds)
+cd $DEV_HOME/basalt_calibration
+source /opt/ros/jazzy/setup.bash
+ros2 bag record -o stereo_rgb_imu_calibration_record \
+  /oak/left/image_raw \
+  /oak/rgb/image_raw \
+  /oak/right/image_raw \
+  /oak/imu/data
+```
+
+**Tips:** Slow smooth movements, cover all corners with the AprilGrid, vary distance and angle.
+
+**Why two recordings?** The 3-camera config (all BGR8) saturates USB bandwidth, limiting camera FPS to ~4.5 fps. IMU calibration needs 15-30 fps to constrain time alignment. The stereo-only config drops the RGB camera, allowing 30 fps.
+
+#### YAML Settings for RGB + Stereo + IMU
+
+```yaml
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: RGBStereo
+      i_enable_imu: true
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0  # CAM_A - IMX577
+      i_fps: 60.0
+      i_width: 1920
+      i_height: 1080
+      i_synced: true
+    left:
+      i_publish_topic: true
+      i_board_socket_id: 1  # CAM_B - OV9782
+      i_fps: 60.0
+      i_width: 1280
+      i_height: 800
+      i_synced: true
+    right:
+      i_publish_topic: true
+      i_board_socket_id: 2  # CAM_C - OV9782
+      i_fps: 60.0
+      i_width: 1280
+      i_height: 800
+      i_synced: true
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 200
+      i_gyro_freq: 200
+      i_sync_method: "LINEAR_INTERPOLATE_ACCEL"  
+```
 
 ### Step 2: Run Basalt Calibration
 
-See the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros2) for detailed calibration steps. The workflow is:
+See the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros2) for the full calibration workflow:
 
-1. **Camera calibration** — run `basalt_calibrate` on Recording A (3 cameras) with `--cam-types pinhole-radtan8 ds pinhole-radtan8`
-2. **Stereo camera calibration** — run `basalt_calibrate` on Recording B (stereo-only) with `--cam-types pinhole-radtan8 pinhole-radtan8`
-3. **IMU calibration** — run `basalt_calibrate_imu` on Recording B (stereo-only) with the stereo calibration result
+1. **Stereo camera calibration** — `basalt_calibrate` on Recording 1 with `--cam-types pinhole-radtan8 pinhole-radtan8`
+2. **IMU calibration** — `basalt_calibrate_imu` on Recording 1 with same `--result-path`
+3. **3-camera calibration** — `basalt_calibrate` on Recording 2 with `--cam-types pinhole-radtan8 ds pinhole-radtan8`
+4. **Merge** — combine stereo+IMU calibration with RGB extrinsics
 
 ### Step 3: Convert Calibration to DepthAI Format
 
 ```bash
-cd /media/logic/USamsung/dai_ws
+cd $DEV_HOME/ros2_ws
 
 python3 scripts/basalt_to_depthai_calib.py \
-  /media/logic/USamsung/oak_calibration/oak_results/calibration.json \
+  $DEV_HOME/basalt_calibration/stereo_imu_calibration_results/calibration.json \
   -o config/oak_ffc_3p_basalt_calib.json
 ```
 
@@ -477,7 +559,7 @@ To use this calibration with depthai-ros, add to your config:
 ### Step 4: Launch with Calibration
 
 ```bash
-cd /media/logic/USamsung/dai_ws
+cd $DEV_HOME/ros2_ws
 source install/setup.bash
 
 ros2 launch depthai_ros_driver driver.launch.py \
@@ -544,42 +626,341 @@ This ensures all cameras capture frames at exactly the same timestamp, which is 
 ### Stereo Disparity Config (oak_ffc_3p_stereo_disparity.yaml)
 
 ```yaml
+# OAK-FFC-3P Stereo Disparity Configuration
+# Outputs: RGB, Disparity, Left/Right rectified images, and IMU
+# Stereo baseline: ~10cm between CAM_B (left) and CAM_C (right)
 /oak:
   ros__parameters:
+    # === CALIBRATION SOURCE ===
+    # By default, uses EEPROM calibration (recommended).
+    # To use external file instead, uncomment the driver section below:
+    # driver:
+    #   i_external_calibration_path: '$DEV_HOME/ros2_ws/config/oak_ffc_3p_depthai_calib.json'
+    # OR for basalt calibration:
+    # driver:
+    #   i_external_calibration_path: '$DEV_HOME/ros2_ws/config/oak_ffc_3p_basalt_calib.json'
+
     pipeline_gen:
+      i_nn_type: none
       i_pipeline_type: RGBD
-      i_enable_sync: true
       i_enable_imu: true
-
+      i_enable_sync: true  # Enable hardware sync for all streams
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0  # CAM_A - IMX577
+      i_fps: 30.0
+      i_width: 1920
+      i_height: 1080
+      i_synced: true  # Sync RGB with stereo
     stereo:
+      i_publish_topic: true
       i_output_disparity: true
-      i_enable_distortion_correction: true
-      i_depth_preset: FAST_ACCURACY     # No device PostProcessing (avoids double-filtering)
-      i_use_host_filters: true          # Host-side ImageFilters node
+      i_left_socket_id: 1   # CAM_B - OV9782 (left)
+      i_right_socket_id: 2  # CAM_C - OV9782 (right)
+      i_width: 1280
+      i_height: 800
+      i_fps: 30.0
+      i_synced: true  # Sync stereo output
+      i_left_rect_publish_topic: true
+      i_right_rect_publish_topic: true
+      i_enable_distortion_correction: true  # Enable for radtan8 distortion model
 
-      # Stereo matching (ROBOTICS-based settings)
-      i_subpixel: true
-      i_subpixel_fractional_bits: 3     # 8x disparity scale
-      i_lr_check: true
-      i_lrc_threshold: 10
-      i_extended_disp: true             # Close-range depth (0.3m+)
-      i_stereo_conf_threshold: 15
-      i_bilateral_sigma: 0
+      # === DEPTH PRESET ===
+      # Options: FAST_ACCURACY, DEFAULT, HIGH_DETAIL, ROBOTICS, FACE
+      # FAST_ACCURACY: Lightweight, no built-in PostProcessing (we apply our own via host filters)
+      # Note: HIGH_DETAIL enables device-side PostProcessing that conflicts with host filters
+      i_depth_preset: FAST_ACCURACY
 
-      # Host-side filters
+      # === STEREO MATCHING ===
+      i_subpixel: true                    # Enable subpixel accuracy
+      i_subpixel_fractional_bits: 3       # Subpixel precision (3-5), higher = more precise
+      i_lr_check: true                    # Left-right consistency check
+      i_lrc_threshold: 10                 # LR check threshold (0-10), lower = stricter
+      i_extended_disp: true               # Extended disparity (doubles range for close objects, 0.3m+)
+      i_disparity_width: "DISPARITY_96"   # DISPARITY_64 or DISPARITY_96
+
+      # === CONFIDENCE & BILATERAL ===
+      # Python tuning script used defaults (no confidence filter, no bilateral).
+      # Keep these low to avoid rejecting valid depth data.
+      i_stereo_conf_threshold: 15         # Confidence threshold (0-255), higher = fewer holes but less coverage
+      i_bilateral_sigma: 0                # Edge-preserving smoothing (0=off, max=250)
+
+      # === HOST-SIDE FILTERS ===
+      # When true, speckle/spatial/temporal/median filters run on the host CPU
+      # via the ImageFilters node (matching the Python tuning script behavior).
+      # When false, these filters run on-device via StereoDepthConfig PostProcessing.
+      i_use_host_filters: true
+
+      # === MEDIAN FILTER ===
+      # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5
       i_median_filter: "KERNEL_5x5"
-      i_enable_speckle_filter: true
-      i_speckle_filter_speckle_range: 200
-      i_speckle_filter_difference_threshold: 16   # 2 * 8 (subpixel scaled)
+
+      # === SPATIAL FILTER (hole filling + smoothing) ===
       i_enable_spatial_filter: true
-      i_spatial_filter_hole_filling_radius: 2
-      i_spatial_filter_alpha: 0.5
-      i_spatial_filter_delta: 160                  # 20 * 8 (subpixel scaled)
-      i_spatial_filter_iterations: 1
+      i_spatial_filter_hole_filling_radius: 2   # Hole fill radius (0-16), ROBOTICS default
+      i_spatial_filter_alpha: 0.5               # Filter strength (0-1), higher = more smoothing
+      i_spatial_filter_delta: 160               # Step size (20 * 8 for subpixel 3 fractional bits)
+      i_spatial_filter_iterations: 1            # Number of filter passes (1-5)
+
+      # === TEMPORAL FILTER (uses previous frames) ===
+      # DISABLED - ROBOTICS preset does not use temporal filtering
       i_enable_temporal_filter: false
+      i_temporal_filter_alpha: 0.4              # Averaging factor (0-1), lower = more smoothing
+      i_temporal_filter_delta: 0                # Threshold (scaled for subpixel)
+      # Persistency modes: PERSISTENCY_OFF, VALID_8_OUT_OF_8, VALID_2_IN_LAST_3,
+      #   VALID_2_IN_LAST_4, VALID_2_OUT_OF_8, VALID_1_IN_LAST_2, VALID_1_IN_LAST_5,
+      #   VALID_1_IN_LAST_8, PERSISTENCY_INDEFINITELY
+      i_temporal_filter_persistency: "PERSISTENCY_OFF"
+
+      # === SPECKLE FILTER (removes isolated noise) ===
+      i_enable_speckle_filter: true
+      i_speckle_filter_speckle_range: 200       # Max disparity difference in speckle (0-255)
+      i_speckle_filter_difference_threshold: 16  # Max diff between neighbors (2 * 8 for subpixel 3 frac bits)
+
+      # === THRESHOLD FILTER (depth range limits) ===
       i_enable_threshold_filter: true
-      i_threshold_filter_min_range: 300            # 0.3m
-      i_threshold_filter_max_range: 10000          # 10m
+      i_threshold_filter_min_range: 300        # Min depth in mm (0.3m)
+      i_threshold_filter_max_range: 10000      # Max depth in mm (10m)
+
+      # === BRIGHTNESS FILTER (filter by source image brightness) ===
+      i_enable_brightness_filter: false
+      i_brightness_filter_min_brightness: 0
+      i_brightness_filter_max_brightness: 256
+
+      # === DECIMATION FILTER (reduce resolution) ===
+      # Useful for performance, trades resolution for speed
+      i_enable_decimation_filter: false
+      i_decimation_filter_decimation_factor: 1  # 1, 2, 3, or 4
+      # Modes: PIXEL_SKIPPING, NON_ZERO_MEDIAN, NON_ZERO_MEAN
+      i_decimation_filter_decimation_mode: "NON_ZERO_MEDIAN"
+
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 200
+      i_gyro_freq: 200
+```
+
+---
+
+## RGB-Only Configuration (4K Recording & YOLO)
+
+These configs use only the **CAM_A (IMX577)** color sensor at **4K (3840x2160)** resolution and **2 FPS**. No stereo cameras or IMU are enabled. Image quality settings (sharpness, denoise, exposure) match the stereo disparity config for consistent results.
+
+### Calibration
+
+RGB-only calibration uses a separate board config with only CAM_A defined. Calibrate using the depthai-core calibration script:
+
+```bash
+cd $DEV_HOME/depthai-core/examples/python/Calibration
+python3 calibrate_depthai_v3.py -brd OAK-FFC-3P-HQ83-RGB-ONLY
+```
+
+The board config (`OAK-FFC-3P-HQ83-RGB-ONLY.json`) defines a single IMX577 color camera on CAM_A with 83.6 degree HFOV. Flash the result to EEPROM or use an external calibration file (see comments in YAML).
+
+### Recording RGB at 4K
+
+```bash
+# Terminal 1: Launch RGB-only driver
+cd $DEV_HOME/ros2_ws
+source install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_rgb_only.yaml \
+  camera_model:=OAK-FFC-3P
+```
+
+```bash
+# Terminal 2: Record RGB images
+cd $DEV_HOME/ros2_ws
+source install/setup.bash
+ros2 bag record -o rgb_4k_record \
+  /oak/rgb/image_raw \
+  /oak/rgb/camera_info
+```
+
+#### YAML Settings for RGB-Only Recording
+
+```yaml
+# OAK-FFC-3P RGB-Only Configuration
+# Outputs: RGB images at 4K (3840x2160) at 2 FPS
+# Camera: CAM_A - IMX577 (socket 0)
+/oak:
+  ros__parameters:
+    # === CALIBRATION SOURCE ===
+    # By default, uses EEPROM calibration (recommended).
+    # To use external file instead, uncomment the driver section below:
+    # driver:
+    #   i_external_calibration_path: '$DEV_HOME/depthai-core/examples/python/Calibration/OAK-FFC-3P-HQ83-RGB-ONLY.json'
+
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: RGB
+      i_enable_imu: false
+
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0  # CAM_A - IMX577
+      i_fps: 2.0
+      i_width: 3840
+      i_height: 2160
+
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      # Manual mode defaults (activate by setting r_set_man_exposure: true)
+      r_exposure: 6000                  # Manual exposure time in microseconds
+      r_iso: 800                        # Manual ISO (100-1600)
+```
+
+### Recording RGB at 4K with YOLO Detection
+
+This config adds on-device YOLO inference to the RGB stream. Detections are published as 2D bounding boxes (not spatial/3D, since no stereo depth is available). The model is auto-downloaded from the DepthAI model zoo on first launch.
+
+```bash
+# Terminal 1: Launch RGB + YOLO driver
+cd $DEV_HOME/ros2_ws
+source install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_rgb_yolo.yaml \
+  camera_model:=OAK-FFC-3P
+```
+
+```bash
+# Terminal 2: Record RGB images + detections
+cd $DEV_HOME/ros2_ws
+source install/setup.bash
+ros2 bag record -o rgb_4k_yolo_record \
+  /oak/rgb/image_raw \
+  /oak/rgb/camera_info \
+  /oak/nn/detections \
+  /oak/nn/passthrough/image_raw
+```
+
+| Topic | Description |
+|-------|-------------|
+| `/oak/rgb/image_raw` | 4K RGB image (3840x2160) |
+| `/oak/rgb/camera_info` | Camera intrinsics |
+| `/oak/nn/detections` | YOLO 2D detection results (`vision_msgs/Detection2DArray`) |
+| `/oak/nn/passthrough/image_raw` | Input image fed to the NN (resized to model input size) |
+
+#### YAML Settings for RGB + YOLO Detection
+
+```yaml
+# OAK-FFC-3P RGB + YOLO Detection Configuration
+# Outputs: RGB images at 4K (3840x2160) at 2 FPS + YOLO detections
+# Camera: CAM_A - IMX577 (socket 0)
+# Note: Uses 2D detection (not spatial) since no stereo cameras are configured.
+/oak:
+  ros__parameters:
+    # === CALIBRATION SOURCE ===
+    # By default, uses EEPROM calibration (recommended).
+    # To use external file instead, uncomment the driver section below:
+    # driver:
+    #   i_external_calibration_path: '$DEV_HOME/depthai-core/examples/python/Calibration/OAK-FFC-3P-HQ83-RGB-ONLY.json'
+
+    pipeline_gen:
+      i_nn_type: rgb
+      i_pipeline_type: RGB
+      i_enable_imu: false
+
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0  # CAM_A - IMX577
+      i_fps: 2.0
+      i_width: 3840
+      i_height: 2160
+
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      # Manual mode defaults (activate by setting r_set_man_exposure: true)
+      r_exposure: 6000                  # Manual exposure time in microseconds
+      r_iso: 800                        # Manual ISO (100-1600)
+
+    # === YOLO DETECTION ===
+    nn:
+      i_nn_model: yolov6-nano           # Model from DepthAI model zoo (auto-downloaded)
+      i_nn_family: detection
+      i_nn_confidence_threshold: 0.5
+      i_enable_passthrough: true        # Also publish the input image fed to the NN
+```
+
+#### Changing the YOLO Model
+
+The `i_nn_model` parameter accepts either a model zoo name or a path to a custom `.blob` file:
+
+```yaml
+nn:
+  # Model zoo (auto-downloaded):
+  i_nn_model: yolov6-nano          # Lightweight, fast
+  # i_nn_model: yolov8-nano        # YOLOv8 variant
+
+  # Custom model (local path):
+  # i_nn_model: /path/to/custom_model.blob
+```
+
+#### Using a Custom-Trained YOLO Model
+
+Custom YOLO models must be compiled to `.blob` format (Intel Myriad X binary) before the OAK's VPU can execute them. The driver automatically resizes camera frames to match the model's expected input size — no manual size configuration needed. Label names are embedded in the `.blob` during compilation.
+
+Requirements:
+
+- Model must be a supported YOLO architecture that depthai-core can decode (YOLOv5, v6, v8, etc.)
+- Without stereo cameras, only 2D detections are available (`i_nn_type: rgb`)
+
+##### Step 1: Export to ONNX
+
+```bash
+# Example for YOLOv8 (Ultralytics)
+yolo export model=best.pt format=onnx imgsz=640
+```
+
+##### Step 2: Compile to .blob
+
+Option A — Using Luxonis `blobconverter` (recommended):
+
+```bash
+pip install blobconverter
+
+python3 -c "
+import blobconverter
+blob_path = blobconverter.from_onnx(
+    model='best.onnx',
+    shaves=6,  # OAK-FFC-3P has 16 SHAVE cores, 6 is a safe default
+    data_type='FP16'
+)
+print(f'Blob saved to: {blob_path}')
+"
+```
+
+Option B — Using the [Luxonis online converter](https://tools.luxonis.com/): upload your `.onnx` file and download the compiled `.blob`.
+
+##### Step 3: Update the YAML config
+
+```yaml
+nn:
+  i_nn_model: /path/to/custom_yolo_model.blob
+  i_nn_family: detection
+  i_nn_confidence_threshold: 0.5
+  i_enable_passthrough: true
 ```
 
 ---

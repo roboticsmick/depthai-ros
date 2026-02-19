@@ -7,10 +7,10 @@
     # By default, uses EEPROM calibration (recommended).
     # To use external file instead, uncomment the driver section below:
     # driver:
-    #   i_external_calibration_path: '/media/logic/USamsung/dai_ws/config/oak_ffc_3p_depthai_calib.json'
+    #   i_external_calibration_path: '$DEV_HOME/ros2_ws/config/oak_ffc_3p_depthai_calib.json'
     # OR for basalt calibration:
     # driver:
-    #   i_external_calibration_path: '/media/logic/USamsung/dai_ws/config/oak_ffc_3p_basalt_calib.json'
+    #   i_external_calibration_path: '$DEV_HOME/ros2_ws/config/oak_ffc_3p_basalt_calib.json'
 
     pipeline_gen:
       i_nn_type: none
@@ -24,6 +24,55 @@
       i_width: 1920
       i_height: 1080
       i_synced: true  # Sync RGB with stereo
+
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      # Manual mode defaults (activate by setting r_set_man_exposure: true)
+      r_exposure: 6000                  # Manual exposure time in microseconds
+      r_iso: 800                        # Manual ISO (100-1600)
+
+    left:
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      r_exposure: 6000
+      r_iso: 800
+
+    right:
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      r_exposure: 6000
+      r_iso: 800
+
     stereo:
       i_publish_topic: true
       i_output_disparity: true
