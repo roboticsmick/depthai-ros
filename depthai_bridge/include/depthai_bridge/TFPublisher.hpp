@@ -32,6 +32,7 @@ class TFPublisher {
                          const std::string& customURDFLocation = "",
                          const std::string& customXacroArgs = "",
                          const bool rsCompatibilityMode = false);
+    ~TFPublisher();
     /**
      * @brief Obtain URDF description by running Xacro with provided arguments.
      */

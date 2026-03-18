@@ -20,7 +20,7 @@
     rgb:
       i_publish_topic: true
       i_board_socket_id: 0  # CAM_A - IMX577
-      i_fps: 30.0
+      i_fps: 5.0
       i_width: 1920
       i_height: 1080
       i_synced: true  # Sync RGB with stereo
@@ -42,6 +42,7 @@
       r_iso: 800                        # Manual ISO (100-1600)
 
     left:
+      i_publish_topic: true    # Publish raw left image for basalt VIO
       # === IMAGE QUALITY (from calibration script defaults) ===
       r_set_sharpness: true
       r_sharpness: 1                    # Range 0-4
@@ -58,6 +59,7 @@
       r_iso: 800
 
     right:
+      i_publish_topic: true    # Publish raw right image for basalt VIO
       # === IMAGE QUALITY (from calibration script defaults) ===
       r_set_sharpness: true
       r_sharpness: 1                    # Range 0-4
@@ -78,8 +80,8 @@
       i_output_disparity: true
       i_left_socket_id: 1   # CAM_B - OV9782 (left)
       i_right_socket_id: 2  # CAM_C - OV9782 (right)
-      i_width: 1280
-      i_height: 800
+      i_width: 640
+      i_height: 400
       i_fps: 30.0
       i_synced: true  # Sync stereo output
       i_left_rect_publish_topic: true

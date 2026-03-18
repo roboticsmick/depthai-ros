@@ -5,6 +5,7 @@
 #include "depthai/pipeline/ThreadedHostNode.hpp"
 #include "depthai/pipeline/datatype/IMUData.hpp"
 #include "depthai/pipeline/datatype/TransformData.hpp"
+#include "depthai/pipeline/datatype/VioHealthData.hpp"
 #include "depthai/pipeline/node/Sync.hpp"
 #include "depthai/utility/Pimpl.hpp"
 #include <atomic>
@@ -50,6 +51,11 @@ class BasaltVIO : public NodeCRTP<ThreadedHostNode, BasaltVIO> {
      * Output passthrough of left image.
      */
     Output passthrough{*this, {"imgPassthrough", DEFAULT_GROUP, {{DatatypeEnum::ImgFrame, true}}}};
+    /**
+     * Output VIO health data: velocity, IMU biases, and optical-flow tracking quality.
+     * Published once per VIO optimisation step, time-aligned with the transform output.
+     */
+    Output health{*this, {"vioHealth", DEFAULT_GROUP, {{DatatypeEnum::VioHealthData, true}}}};
 
     void setImuUpdateRate(int rate) {
         imuUpdateRate = rate;
@@ -80,7 +86,6 @@ class BasaltVIO : public NodeCRTP<ThreadedHostNode, BasaltVIO> {
     void imuCB(std::shared_ptr<ADatatype> imuData);
     void stop() override;
     Input inSync{*this, {"inSync", DEFAULT_GROUP, false, 0, {{DatatypeEnum::MessageGroup, true}}}};
-    std::shared_ptr<ImgFrame> leftImg;
     std::atomic<bool> initialized{false};
     std::string configPath = "";
     int imuUpdateRate = 200;

@@ -7,23 +7,23 @@
     rgb:
       i_publish_topic: true
       i_board_socket_id: 0  # CAM_A - IMX577
-      i_fps: 60.0
-      i_width: 1920
-      i_height: 1080
-      i_synced: true
+      i_fps: 2.0            # Low FPS for detailed 4K imagery without excessive bandwidth
+      i_width: 3840
+      i_height: 2160
+      i_synced: false       # RGB is independent from stereo/IMU
     left:
       i_publish_topic: true
       i_board_socket_id: 1  # CAM_B - OV9782
-      i_fps: 60.0
-      i_width: 1280
-      i_height: 800
+      i_fps: 30.0
+      i_width: 640
+      i_height: 400
       i_synced: true
     right:
       i_publish_topic: true
       i_board_socket_id: 2  # CAM_C - OV9782
-      i_fps: 60.0
-      i_width: 1280
-      i_height: 800
+      i_fps: 30.0
+      i_width: 640
+      i_height: 400
       i_synced: true
     imu:
       i_batch_report_threshold: 1

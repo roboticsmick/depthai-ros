@@ -1,0 +1,186 @@
+# OAK-FFC-3P Configuration for Stereo VIO
+# Optimized for Basalt ROS2 VIO (host-side on Jetson)
+#
+# KEY DIFFERENCES from balanced.yaml:
+# - RGB is NOT synced (reduces frame sync complexity)
+# - Stereo pair (left+right) sync is STRICT (required for VIO)
+# - IMU is independent (VIO handles async IMU)
+# - Result: Faster frame throughput, no sync stalls
+#
+# Outputs:
+#   - /oak/left/image_raw (mono8, 30 Hz)
+#   - /oak/right/image_raw (mono8, 30 Hz)
+#   - /oak/imu/data (400 Hz)
+#   - /oak/rgb/image_raw (optional, not synced with stereo)
+#
+# For Basalt VIO on Jetson:
+#   1. Subscribe to /oak/left/image_raw + /oak/right/image_raw + /oak/imu/data
+#   2. Use message_filters::sync_policies::ExactTime for stereo pair
+#   3. IMU handled independently by VIO
+#
+
+# Global ROS2 parameters (disable image_transport plugin auto-discovery)
+/**:
+  ros__parameters:
+    image_transport_flattened_subscribers: false
+
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none
+      i_pipeline_type: RGBD          # Still RGBD for camera calibration, but RGB NOT synced
+      i_enable_imu: true
+      i_enable_vio: false            # VIO disabled (use basalt_ros2 on host instead)
+      i_enable_sync: true            # Enable sync for stereo pair only
+
+    # ===================================================================
+    # === STEREO (LEFT + RIGHT) - SYNCHRONIZED FOR VIO ===
+    # ===================================================================
+    # These MUST be synchronized with each other (ExactTime in code)
+    # but NOT with RGB or depth computation
+
+    left:
+      i_publish_topic: true
+      i_board_socket_id: 1           # CAM_B - OV9282 (left)
+      i_fps: 30.0
+      i_width: 640
+      i_height: 400
+      i_synced: true                 # Synced with RIGHT only (via stereo node)
+      i_image_transport_type: raw
+
+      # === IMAGE QUALITY ===
+      r_set_sharpness: true
+      r_sharpness: 1
+      r_set_luma_denoise: true
+      r_luma_denoise: 3
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2
+
+      # === EXPOSURE ===
+      r_set_man_exposure: false
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000
+
+    right:
+      i_publish_topic: true
+      i_board_socket_id: 2           # CAM_C - OV9282 (right)
+      i_fps: 30.0
+      i_width: 640
+      i_height: 400
+      i_synced: true                 # Synced with left only (via stereo node)
+      i_image_transport_type: raw
+
+      # === IMAGE QUALITY ===
+      r_set_sharpness: true
+      r_sharpness: 1
+      r_set_luma_denoise: true
+      r_luma_denoise: 3
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2
+
+      # === EXPOSURE ===
+      r_set_man_exposure: false
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000
+
+    # ===================================================================
+    # === STEREO DEPTH (for optional Jetson processing) ===
+    # ===================================================================
+    # NOT synced with RGB - allows faster frame rate
+    # Can be disabled if only VIO odometry is needed
+
+    stereo:
+      i_publish_topic: false         # Disabled — depth computed on host via stereo_image_proc
+      i_output_disparity: false      # Disabled — host SGBM used instead
+      i_depth_preset: FAST_ACCURACY
+      i_fps: 30.0
+      i_left_socket_id: 1            # CAM_B
+      i_right_socket_id: 2           # CAM_C
+      i_width: 640
+      i_height: 400
+      i_synced: true                 # Synced with left+right pair
+      i_left_rect_publish_topic: false
+      i_right_rect_publish_topic: false
+      i_enable_distortion_correction: true
+      i_image_transport_type: raw
+
+      # === STEREO MATCHING (device-side, for reference / future use) ===
+      i_subpixel: true
+      i_subpixel_fractional_bits: 3
+      i_lr_check: true
+      i_lrc_threshold: 10
+      i_extended_disp: true
+      i_disparity_width: "DISPARITY_96"
+
+      # === CONFIDENCE & BILATERAL ===
+      i_stereo_conf_threshold: 15
+      i_bilateral_sigma: 0
+
+      # === HOST-SIDE FILTERS (applies if device stereo re-enabled) ===
+      i_use_host_filters: true
+      i_median_filter: "KERNEL_5x5"
+      i_enable_spatial_filter: true
+      i_spatial_filter_hole_filling_radius: 2
+      i_spatial_filter_alpha: 0.5
+      i_spatial_filter_delta: 160
+      i_spatial_filter_iterations: 1
+      i_enable_temporal_filter: false
+      i_temporal_filter_alpha: 0.4
+      i_temporal_filter_delta: 0
+      i_temporal_filter_persistency: "PERSISTENCY_OFF"
+      i_enable_speckle_filter: true
+      i_speckle_filter_speckle_range: 200
+      i_speckle_filter_difference_threshold: 16
+      i_enable_threshold_filter: true
+      i_threshold_filter_min_range: 300        # mm (0.3m)
+      i_threshold_filter_max_range: 10000      # mm (10m)
+      i_enable_brightness_filter: false
+      i_brightness_filter_min_brightness: 0
+      i_brightness_filter_max_brightness: 256
+      i_enable_decimation_filter: false
+      i_decimation_filter_decimation_factor: 1
+      i_decimation_filter_decimation_mode: "NON_ZERO_MEDIAN"
+
+    # ===================================================================
+    # === RGB (OPTIONAL - NOT SYNCED WITH STEREO) ===
+    # ===================================================================
+    # RGB publishes independently (not required for VIO)
+    # If you don't need RGB, you can disable this to reduce USB load
+
+    rgb:
+      i_publish_topic: true          # Set to false if not needed
+      i_board_socket_id: 0           # CAM_A - IMX577
+      i_fps: 2.0
+      i_width: 3840
+      i_height: 2160
+      i_synced: false                # KEY: NOT synced with stereo! Prevents frame stall
+      i_enable_jpeg: true
+      i_mjpeg_quality: 90
+      i_format: "MJPEG"
+      #i_image_transport_type: raw
+
+      # === IMAGE QUALITY ===
+      r_set_sharpness: true
+      r_sharpness: 1
+      r_set_luma_denoise: true
+      r_luma_denoise: 3
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2
+
+      # === EXPOSURE ===
+      r_set_man_exposure: false
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000
+
+    # ===================================================================
+    # === IMU (INDEPENDENT) ===
+    # ===================================================================
+    # IMU is NOT synced with images
+    # VIO code handles asynchronous IMU data via callback queue
+
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 100              # BMI270 max frequency
+      i_gyro_freq: 100 
+      i_sync_method: "LINEAR_INTERPOLATE_ACCEL"

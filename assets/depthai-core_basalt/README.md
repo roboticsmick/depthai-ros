@@ -8,6 +8,7 @@ How to configure and run Basalt Visual-Inertial Odometry using `depthai-ros` on 
 
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
+- [Heap Corruption Bug Fixes (Critical)](#heap-corruption-bug-fixes-critical)
 - [Required depthai-core Patches](#required-depthai-core-patches)
 - [Understanding Your Calibration Files](#understanding-your-calibration-files)
 - [Merging Calibrations (Optional — for Photogrammetry)](#merging-calibrations-optional--for-photogrammetry)
@@ -53,12 +54,14 @@ The BasaltVIO node runs on the host (via depthai-core), NOT on the OAK's VPU. It
 1. **depthai-core built from source with Basalt support:**
 
    ```bash
+   # Workspace-based installation (recommended, no sudo needed)
    cmake -S . -B build \
        -DDEPTHAI_BASALT_SUPPORT=ON \
-       -DCMAKE_INSTALL_PREFIX=/usr/local
-   cmake --build build -j$(nproc)
-   sudo cmake --install build
-   sudo ldconfig
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_INSTALL_PREFIX=/media/logic/USamsung/ros2_ws/install
+   cmake --build build -j8
+   cmake --install build
+   # NO sudo or ldconfig needed for workspace installation
    ```
 
    See the [depthai-ros README](README.md) for full build instructions.
@@ -66,13 +69,252 @@ The BasaltVIO node runs on the host (via depthai-core), NOT on the OAK's VPU. It
 2. **depthai-ros workspace built:**
 
    ```bash
-   cd $DEV_HOME/ros2_ws
+   cd /media/logic/USamsung/ros2_ws
    source /opt/ros/jazzy/setup.bash
-   colcon build
-   source install/setup.bash
+   source install/setup.bash  # Source workspace to find depthai-core
+
+   # CRITICAL: Pass CMAKE_PREFIX_PATH to find vcpkg dependencies
+   MAKEFLAGS="-j8" colcon build --packages-select depthai_ros_driver \
+     --parallel-workers 1 \
+     --cmake-args -DCMAKE_BUILD_TYPE=Release \
+     -DCMAKE_PREFIX_PATH="/media/logic/USamsung/ros2_ws/install/lib/cmake;/media/logic/USamsung/depthai-core/build/vcpkg_installed/x64-linux/share"
    ```
 
+   **Why CMAKE_PREFIX_PATH is needed:** depthai-core depends on vcpkg packages (nlohmann_json, XLink, OpenCV, xtensor) that must be found during cmake configuration.
+
+### Building with AddressSanitizer (ASAN) for debugging
+
+**ASAN is for development/debugging only.** Production builds should use Release without ASAN.
+
+```bash
+cd /media/logic/USamsung/depthai-core
+rm -rf build                # Recommended when changing compile/link flags
+
+cmake -S . -B build \
+  -DDEPTHAI_BASALT_SUPPORT=ON \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_INSTALL_PREFIX=/media/logic/USamsung/ros2_ws/install \
+  -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" \
+  -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address"
+
+cmake --build build -j8
+cmake --install build  # No sudo needed for workspace installation
+```
+
+Then launch with ASAN runtime:
+
+```bash
+source /media/logic/USamsung/ros2_ws/install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=/media/logic/USamsung/ros2_ws/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_vio.yaml
+```
+
+Check ASAN report:
+```bash
+cat /tmp/asan_depthai.* | grep -E "ERROR|SUMMARY|double-free|use-after-free"
+```
+
 3. **Basalt calibration completed** (stereo + IMU at minimum). See the [basalt_ros2 README](https://github.com/roboticsmick/basalt_ros2) for the calibration workflow.
+
+---
+
+## Heap Corruption Bug Fixes (Critical)
+
+**Status:** ✅ **FIXED** — Applied to both `BasaltVIO.hpp` and `BasaltVIO.cpp`
+
+When launching VIO with ASAN enabled, the upstream depthai-core exhibited deterministic heap corruption crashes ("free(): unaligned chunk detected in tcache 2", "double free or corruption (!prev)", "SEGV on unknown address", "attempting double-free") immediately after "Robot initialized" or after running for several seconds. These were caused by several distinct race conditions and async callback lifetime issues.
+
+### Issue 1: TFPublisher Async Parameter Setting Race
+
+**Files affected:** `depthai_bridge/include/depthai_bridge/TFPublisher.hpp`, `depthai_bridge/src/TFPublisher.cpp`
+
+**Problem:**
+- `TFPublisher::publishDescription()` called `paramClient->set_parameters()` asynchronously and **discarded the returned Future**
+- The async callback continued after the function returned, potentially accessing destroyed TFPublisher members
+- This caused a double-free in ROS2 parameter client internals
+
+**Fix:**
+```cpp
+// In publishDescription():
+auto result = paramClient->set_parameters({robotDescr});
+if(result.valid()) {
+    try {
+        result.wait_for(std::chrono::seconds(2));
+    } catch(const std::exception& e) {
+        RCLCPP_WARN(logger, "Exception while waiting for set_parameters: %s", e.what());
+    }
+}
+```
+
+**Why it works:** Waiting for the future synchronously ensures the async operation completes before `publishDescription()` returns, so no callback accesses destroyed members.
+
+---
+
+### Issue 2: BasaltVIO leftImg Thread Race Condition
+
+**Files affected:** `include/depthai/basalt/BasaltVIO.hpp`, `src/basalt/BasaltVIO.cpp`
+
+**Problem:**
+- The `leftImg` shared_ptr was accessed by two threads without synchronization:
+  - `stereoCB()` **writes** `leftImg = imgFrame;` in the device callback thread
+  - `run()` **reads** `if(leftImg) passthrough.send(leftImg);` in the VIO worker thread
+- Both threads modify the shared_ptr's reference count simultaneously
+- This causes "attempting double-free" or "use-after-free" errors on the shared_ptr control block
+
+**Fix (Part 1 - Add Mutex):**
+
+In `BasaltVIO.hpp`:
+```cpp
+#include <mutex>
+
+class BasaltVIO : public ... {
+    // ...
+    std::shared_ptr<ImgFrame> leftImg;
+    mutable std::mutex leftImgMutex;  // Protects leftImg from simultaneous access
+```
+
+In `BasaltVIO.cpp`, `stereoCB()` method:
+```cpp
+for(auto& msg : *group) {
+    std::shared_ptr<ImgFrame> imgFrame = std::dynamic_pointer_cast<ImgFrame>(msg.second);
+    if(i == 0) {
+        std::lock_guard<std::mutex> lock(leftImgMutex);
+        leftImg = imgFrame;  // Protected write
+    }
+    // ...
+}
+```
+
+**Why:** Ensures only one thread at a time modifies the leftImg shared_ptr.
+
+---
+
+### Issue 3: Refcount Race During Message Send
+
+**Files affected:** `src/basalt/BasaltVIO.cpp`
+
+**Problem:**
+- Even with the mutex protecting the `leftImg = imgFrame;` assignment, the subsequent `passthrough.send(leftImg)` was **still holding the mutex**
+- `send()` internally queues the message and modifies the shared_ptr refcount
+- `stereoCB()` could enter the mutex and decrement the refcount while `send()` was still incrementing it
+- This causes a SEGV in `std::_Sp_counted_base<>::_M_release_last_use_cold()`
+
+**Fix:**
+
+In `BasaltVIO.cpp`, `run()` method:
+```cpp
+// Copy leftImg under lock, then send outside lock to avoid refcount races
+std::shared_ptr<ImgFrame> imgToSend;
+{
+    std::lock_guard<std::mutex> lock(leftImgMutex);
+    imgToSend = leftImg;  // Atomic copy under lock
+}
+if(imgToSend) passthrough.send(imgToSend);  // Send outside lock
+```
+
+**Why it works:**
+1. The **copy** of the shared_ptr happens atomically under the lock
+2. This increments the refcount once, safely, while the mutex prevents stereoCB from interfering
+3. The **send()** call happens without the lock, so stereoCB can freely update leftImg in parallel
+4. When stereoCB updates leftImg, the refcount for the old object decrements cleanly
+5. When run() sends imgToSend, the refcount for the copy decrements cleanly
+6. No two threads are modifying the same refcount simultaneously
+
+---
+
+### Issue 4: ImgFrame Refcount Race in stereoCB Callback
+
+**Files affected:** `src/basalt/BasaltVIO.cpp`
+
+**Problem:**
+- The `stereoCB()` callback received `ImgFrame` shared_ptrs from the message queue
+- The callback held onto these references throughout the entire loop processing
+- While stereoCB was accessing the frame, another thread could be releasing its reference
+- This caused concurrent reference count modifications, leading to "attempting double-free" errors
+- The ImgTransformation destructor would be called multiple times on the same memory
+
+**Root Cause:**
+When deserializing incoming images from XLinkInHost, the device thread creates ImgFrames. These are passed to the stereoCB callback via MessageGroup. If both:
+1. The callback thread still holds a shared_ptr to the frame
+2. The device input thread's reference count drops to zero
+Then the frame is deleted while the callback is still using it, causing a use-after-free race.
+
+**Fix:**
+
+In `BasaltVIO.cpp`, `stereoCB()` method, extract data then immediately release the imgFrame:
+
+```cpp
+for(auto& msg : *group) {
+    // Extract all needed data from imgFrame before releasing the shared_ptr
+    // to avoid race conditions with concurrent thread access.
+    std::shared_ptr<ImgFrame> imgFrame = std::dynamic_pointer_cast<ImgFrame>(msg.second);
+    if(!imgFrame) continue;
+
+    auto t = imgFrame->getTimestamp();
+    int64_t tNS = std::chrono::time_point_cast<std::chrono::nanoseconds>(t).time_since_epoch().count();
+    auto exposure = imgFrame->getExposureTime();
+    int exposureMS = std::chrono::duration_cast<std::chrono::milliseconds>(exposure).count();
+    size_t width = imgFrame->getWidth();
+    size_t height = imgFrame->getHeight();
+    size_t fullSize = width * height;
+    const auto srcData = imgFrame->getData();  // Make a copy to avoid holding reference
+    const uint8_t* dataIN = srcData.data();
+    size_t dataSize = srcData.size();
+
+    // Release imgFrame reference immediately after copying data
+    imgFrame.reset();
+
+    if(dataSize < fullSize) {
+        std::cerr << "BasaltVIO::stereoCB: frame data size (" << dataSize << ") < expected (" << fullSize
+                  << ") — skipping frame to avoid overflow\n";
+        return;
+    }
+
+    data->img_data[i].img = std::make_shared<basalt::ManagedImage<uint16_t>>(width, height);
+    data->t_ns = tNS;
+    data->img_data[i].exposure = exposureMS;
+    uint16_t* data_out = data->img_data[i].img->ptr;
+    for(size_t j = 0; j < fullSize; j++) {
+        int val = dataIN[j];
+        val = val << 8;
+        data_out[j] = val;
+    }
+    i++;
+}
+```
+
+**Why it works:**
+
+1. **Early release**: `imgFrame.reset()` is called immediately after extracting all needed data
+2. **Data copy**: `srcData = imgFrame->getData()` makes a copy of the vector, so we don't hold a reference to the original frame's data
+3. **Primitive copying**: Width, height, timestamp, and exposure are primitives — copying them doesn't hold any shared resources
+4. **No concurrent refcount modifications**: The imgFrame's refcount is decremented while no other thread is modifying it
+5. **Safe processing**: All pixel data processing happens on the copied data, not the original frame
+
+---
+
+### Verification
+
+After applying these four fixes and rebuilding:
+
+```bash
+rm -f /tmp/asan_depthai.*
+source $DEV_HOME/ros2_ws/install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$DEV_HOME/ros2_ws/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_vio.yaml \
+  use_asan:=true
+```
+
+**Expected result:** VIO initializes and runs without ASAN errors. The process should run for extended periods (minutes) without crashing.
+
+**Check for errors:**
+```bash
+cat /tmp/asan_depthai.* | grep -E "ERROR|SUMMARY|double-free|use-after-free"
+```
+
+If clean, you should see no errors (or only pre-existing ROS2 middleware issues like `new_delete_type_mismatch`).
 
 ---
 

@@ -24,17 +24,34 @@ def setup_launch_prefix(context, *args, **kwargs):
     use_valgrind = LaunchConfiguration("use_valgrind", default="false")
     valgrind_args = LaunchConfiguration(
         "valgrind_args",
-        default="--leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=memcheck.log",
+        default="--tool=memcheck --track-origins=yes --num-callers=30 --log-file=/tmp/valgrind_depthai.log",
     )
     use_perf = LaunchConfiguration("use_perf", default="false")
+    use_asan = LaunchConfiguration("use_asan", default="false")
 
     launch_prefix = ""
 
     if use_gdb.perform(context) == "true":
         launch_prefix += "xterm -e gdb -ex run --args"
     if use_valgrind.perform(context) == "true":
-        launch_prefix += f"valgrind {valgrind_args.perform(context)}"
+        launch_prefix += f"valgrind {valgrind_args.perform(context)} "
         print(launch_prefix)
+    if use_asan.perform(context) == "true":
+        asan_opts = ":".join([
+            "detect_leaks=0",
+            "halt_on_error=0",
+            "log_path=/tmp/asan_depthai",
+            "symbolize=1",
+            "print_stacktrace=1",
+            "detect_stack_use_after_return=1",
+            "new_delete_type_mismatch=0",  # Suppress ROS2 rcl/rcutils C/C++ mismatch
+        ])
+        launch_prefix += (
+            f"env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.8 "
+            f"ASAN_OPTIONS={asan_opts} "
+            f"ASAN_SYMBOLIZER_PATH=/usr/bin/addr2line "
+        )
+        print(f"[ASAN] Launch prefix: {launch_prefix}")
     if use_perf.perform(context) == "true":
         launch_prefix += (
             "perf record -g --call-graph dwarf --output=perf.out.node_name.data --"
@@ -272,9 +289,14 @@ def generate_launch_description():
         DeclareLaunchArgument("use_valgrind", default_value="false"),
         DeclareLaunchArgument(
             "valgrind_args",
-            default_value="--leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=memcheck.log",
+            default_value="--tool=memcheck --track-origins=yes --num-callers=30 --log-file=/tmp/valgrind_depthai.log",
         ),
         DeclareLaunchArgument("use_perf", default_value="false"),
+        DeclareLaunchArgument(
+            "use_asan",
+            default_value="false",
+            description="Run component_container under AddressSanitizer (requires ASAN-compiled libs).",
+        ),
         DeclareLaunchArgument(
             "rs_compat",
             default_value="false",

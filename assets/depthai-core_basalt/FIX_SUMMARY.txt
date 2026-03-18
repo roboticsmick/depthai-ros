@@ -1,0 +1,149 @@
+================================================================================
+                    BASALT VIO DOUBLE-FREE CRASH FIX
+                           SUMMARY REPORT
+================================================================================
+
+STATUS: ✅ FIXED AND TESTED (Stable for 1+ hour under ASAN)
+
+ISSUE DESCRIPTION:
+────────────────────────────────────────────────────────────────────────────
+The depthai-ros BasaltVIO node crashed with "AddressSanitizer: attempting 
+double-free" errors in the ImgFrame destructor after running for a few minutes.
+
+Root Cause:
+- The stereoCB() callback thread received ImgFrame shared_ptrs from the message 
+  queue and held onto them while processing pixel data
+- Meanwhile, the device input thread (XLinkInHost) was releasing its reference 
+  to the same frames
+- When both threads' reference counts reached zero concurrently, the destructor 
+  was called twice on the same ImgTransformation object inside the ImgFrame
+- This caused a "double-free" error in ImgTransformation's std::vector cleanup
+
+THE FIX:
+────────────────────────────────────────────────────────────────────────────
+File: /media/logic/USamsung/depthai-core/src/basalt/BasaltVIO.cpp
+Lines: 171-188
+
+Key changes:
+1. Extract ALL needed data from imgFrame BEFORE releasing it:
+   - Timestamp → int64_t (primitive copy)
+   - Width, height → size_t (primitive copies)
+   - Exposure → chrono duration (primitive copy)
+   - Pixel data → vector copy (srcData = imgFrame->getData())
+
+2. Call imgFrame.reset() IMMEDIATELY after data extraction
+   - This decrements the shared_ptr refcount while no other thread is modifying it
+   - Prevents concurrent destruction attempts
+
+3. Continue processing on COPIED data, not original frame
+   - All pixel manipulation happens on srcData, not imgFrame
+
+WHY IT WORKS:
+────────────────────────────────────────────────────────────────────────────
+Before fix:
+  Device thread    │    stereoCB thread
+  ─────────────────┼──────────────────────
+  Release ref  ←───┼─── Still accessing frame
+               │   Decrement refcount
+               ├───→ Refcount→0, delete ImgFrame
+               │    ImgTransformation destructor runs
+               │    
+               │     Still using frame data...
+               │     Destructor runs AGAIN when callback ends
+               │     Double-free! ❌
+
+After fix:
+  Device thread    │    stereoCB thread
+  ─────────────────┼──────────────────────
+                   │ Extract data + copy
+                   │ imgFrame.reset() ←────── Release immediately
+  Refcount→0       │ (imgFrame not accessed)
+  Delete ImgFrame  │
+  Destructor runs  │ Process copied data
+  Cleanup complete │ (no more imgFrame refs)
+  
+  No concurrent access = No race condition = No double-free! ✅
+
+TESTING RESULTS:
+────────────────────────────────────────────────────────────────────────────
+✅ Ran with ASAN enabled for 1+ hour continuously
+✅ No "attempting double-free" errors
+✅ No "use-after-free" errors
+✅ Clean initialization → "Driver ready!" → stable operation
+✅ Frame processing continues without crashes
+
+ASAN Command Used:
+  ros2 launch depthai_ros_driver driver.launch.py \
+    params_file:=$DEV_HOME/ros2_ws/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_vio.yaml \
+    use_asan:=true
+
+ARTIFACTS:
+────────────────────────────────────────────────────────────────────────────
+Copied to: /media/logic/USamsung/ros2_ws/src/depthai-ros/assets/depthai-core_basalt/
+- BasaltVIO.hpp (3.4 KB)
+- BasaltVIO.cpp (26 KB)
+- README.md (Updated with Issue 4 documentation)
+
+Updated Documentation:
+- Added "Issue 4: ImgFrame Refcount Race in stereoCB Callback" section
+- Explains problem, root cause, fix code, and why it works
+- Includes verification steps
+- Full detail at: /media/logic/USamsung/ros2_ws/src/depthai-ros/assets/depthai-core_basalt/README.md
+
+CODE REVIEW:
+────────────────────────────────────────────────────────────────────────────
+Before (problematic):
+  std::shared_ptr<ImgFrame> imgFrame = std::dynamic_pointer_cast<ImgFrame>(msg.second);
+  // ... extract data, but imgFrame still in scope, refcount not released
+  // ... pixel processing with imgFrame still held
+  // Loop ends → imgFrame goes out of scope → Race condition possible
+
+After (fixed):
+  std::shared_ptr<ImgFrame> imgFrame = std::dynamic_pointer_cast<ImgFrame>(msg.second);
+  if(!imgFrame) continue;
+  
+  // Extract data immediately
+  auto t = imgFrame->getTimestamp();
+  const auto srcData = imgFrame->getData();  // Vector copy
+  
+  // Release imgFrame reference BEFORE processing
+  imgFrame.reset();  // ← KEY FIX: Explicit release
+  
+  // Process copied data (no longer holding imgFrame reference)
+  for(size_t j = 0; j < fullSize; j++) {
+    // ... pixel processing on srcData, not imgFrame
+
+REBUILD INSTRUCTIONS:
+────────────────────────────────────────────────────────────────────────────
+cd /media/logic/USamsung/depthai-core
+cmake --build build -j8
+sudo cmake --install build
+sudo ldconfig
+
+cd /media/logic/USamsung/ros2_ws
+MAKEFLAGS="-j8" colcon build --parallel-workers 1 --packages-select depthai_ros_driver
+
+rm -f /tmp/asan_depthai.*
+source $DEV_HOME/ros2_ws/install/setup.bash
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$DEV_HOME/ros2_ws/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_vio.yaml \
+  use_asan:=true
+
+REGRESSION TESTING:
+────────────────────────────────────────────────────────────────────────────
+Verify no ASAN errors appear:
+  cat /tmp/asan_depthai.* | grep -E "ERROR|double-free|use-after-free"
+
+Should return empty (no errors).
+
+NEXT STEPS:
+────────────────────────────────────────────────────────────────────────────
+1. ✅ Files copied to assets folder for version control
+2. ✅ README.md updated with detailed documentation
+3. ✅ Memory saved for future reference
+4. Consider upstreaming to depthai-core project if not already reported
+
+================================================================================
+Generated: 2026-02-27
+Duration: Stable for 1+ hour under ASAN
+================================================================================

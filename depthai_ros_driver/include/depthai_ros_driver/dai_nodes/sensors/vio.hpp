@@ -2,6 +2,8 @@
 
 #include "depthai_ros_driver/dai_nodes/base_node.hpp"
 #include "depthai_ros_driver/dai_nodes/sensors/sensor_helpers.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
 namespace dai {
@@ -65,10 +67,14 @@ class Vio : public BaseNode {
    private:
     std::unique_ptr<depthai_bridge::TransformDataConverter> odomConv;
     void transCB(const std::string& name, const std::shared_ptr<dai::ADatatype>& data);
+    void healthCB(const std::string& name, const std::shared_ptr<dai::ADatatype>& data);
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odomPub;
+    rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr velPub;
+    rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr healthPub;
     std::shared_ptr<dai::node::BasaltVIO> vioNode;
     std::unique_ptr<param_handlers::VioParamHandler> ph;
     std::shared_ptr<dai::MessageQueue> transQ;
+    std::shared_ptr<dai::MessageQueue> healthQ;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tfBr;
     std::string frameId, childFrameId;
     bool publishTf;

@@ -1,5 +1,6 @@
 #include "depthai_bridge/TFPublisher.hpp"
 
+#include <chrono>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,6 +67,11 @@ TFPublisher::TFPublisher(std::shared_ptr<rclcpp::Node> node,
     }
 }
 
+TFPublisher::~TFPublisher() {
+    // Destructor needs to ensure all async operations are complete before members are destroyed
+    // This is handled by waiting in publishDescription() before returning
+}
+
 void TFPublisher::publishDescription() {
     auto urdf = getURDF();
     auto robotDescr = rclcpp::Parameter("robot_description", urdf);
@@ -76,6 +82,14 @@ void TFPublisher::publishDescription() {
         RCLCPP_WARN(logger, "Parameter server for [ %s ] is not ready, please check if the node is running", std::string(camName + "_state_publisher").c_str());
     }
     auto result = paramClient->set_parameters({robotDescr});
+    // Wait for the async operation to complete before returning to avoid race conditions when the object is destroyed
+    if(result.valid()) {
+        try {
+            result.wait_for(std::chrono::seconds(2));
+        } catch(const std::exception& e) {
+            RCLCPP_WARN(logger, "Exception while waiting for set_parameters: %s", e.what());
+        }
+    }
     RCLCPP_INFO(logger, "Published URDF");
 }
 

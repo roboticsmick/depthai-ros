@@ -14,6 +14,45 @@ Upstream docs: [docs.luxonis.com/software-v3/depthai/ros](https://docs.luxonis.c
 
 ---
 
+## Integration Status
+
+**Tested Hardware:** Luxonis OAK-FFC-3P (ID: 14442C10B1991CD000)
+**ROS2 Workspace:** `/media/logic/USamsung/ros2_ws`
+**Status:** ✅ Driver running and publishing topics (Session 3 — 2026-03-07)
+
+### Published Topics (Confirmed Live)
+
+- **`/oak/stereo/left/image`** — Left stereo image (1280×800, OV9782 mono sensor)
+- **`/oak/stereo/right/image`** — Right stereo image (1280×800, OV9782 mono sensor)
+- **`/oak/imu/data`** — IMU data (BMI270 accelerometer + gyroscope)
+- **`/oak/left/image_raw`** — Raw left sensor frame
+- **`/oak/right/image_raw`** — Raw right sensor frame
+- **`/oak/rgb/image_raw`** — RGB color camera (IMX577)
+
+### Hardware Integration with basalt_ros2 VIO
+
+The depthai-ros driver provides camera and IMU streams that are consumed by basalt_ros2 for visual-inertial odometry:
+
+```
+depthai-ros Driver                    basalt_ros2 VIO Node
+├─ /oak/stereo/left/image ──────────→ RosCameraDevice
+├─ /oak/stereo/right/image ─────────→ (time-synced pair)
+└─ /oak/imu/data ───────────────────→ RosImuDevice
+                                            │
+                                           ↓
+                                      OpticalFlow → VioEstimator
+                                            │
+                                           ↓
+                                   Publish /odometry
+                                   Broadcast TF2 transform
+```
+
+**Known Issues:**
+- [BUG-006](../ROS2_BUG_LOG.md#bug-006-stereodepth-alignment-error-during-live-camera-test): StereoDepth alignment error (periodic warning, driver recovers automatically)
+- [BUG-007](../ROS2_BUG_LOG.md#bug-007-calibration-file-not-loaded--using-default-calibration): VIO running on default calibration (needs basalt_calibrate output)
+
+---
+
 ## Installation for ROS2 Jazzy (Build from Source)
 
 > **Important:** The official [Build from Source](https://docs.luxonis.com/software-v3/depthai/ros/build/) instructions use `install_dependencies.sh` which installs a **pre-built binary** of depthai-core. As of November 2025, this binary is incompatible with the depthai-ros `kilted` branch on ROS2 Jazzy - it fails with missing `MapData.hpp` errors.
@@ -148,13 +187,36 @@ sudo ldconfig
 
 This means you're using the pre-built binary from `install_dependencies.sh`. You need to build depthai-core from source (Step 1).
 
-#### CMake can't find depthai
+#### CMake can't find depthai: "target depthai::core not found"
 
-Ensure CMAKE_PREFIX_PATH includes `/usr/local`:
+**Symptom:** Build fails with:
+```
+CMake Error at CMakeLists.txt:74 (target_link_libraries):
+  Target "depthai_bridge" links to: depthai::core but the target was not found.
+```
+
+**Root Cause:** CMAKE_PREFIX_PATH is not being passed through colcon to the CMake invocations.
+
+**Solution:** Set CMAKE_PREFIX_PATH as a **shell variable before the colcon command**, not via `export`:
 
 ```bash
+# CORRECT - This works:
+CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" colcon build --packages-select depthai_bridge
+
+# WRONG - This doesn't work with colcon:
 export CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH"
+colcon build --packages-select depthai_bridge
 ```
+
+If you previously failed to build, clean the build artifacts first:
+
+```bash
+rm -rf build/depthai_bridge build/depthai_filters build/depthai_examples build/depthai_ros_driver
+rm -rf install/depthai_bridge install/depthai_filters install/depthai_examples install/depthai_ros_driver
+CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" colcon build --packages-select depthai_bridge --parallel-workers 1
+```
+
+**Why this happens:** colcon runs each package's CMake in an isolated subprocess. The `export` command only affects the current shell, not the subprocess. Setting the variable directly in the command line passes it to the subprocess properly.
 
 #### Broken cmake config in /opt/ros/jazzy
 
@@ -169,8 +231,9 @@ sudo rm -rf /opt/ros/jazzy/lib/x86_64-linux-gnu/cmake/depthai.backup-*
 Use single-threaded build:
 
 ```bash
-MAKEFLAGS="-j1 -l1" colcon build --parallel-workers 1
+MAKEFLAGS="-j8" colcon build --packages-select depthai-ros --parallel-workers 1
 ```
+
 
 ### Build Info
 
@@ -387,7 +450,7 @@ The conversion script automatically maps basalt's radtan8 coefficients to this f
 
 Two separate recordings are needed. The stereo + IMU recording must be at high FPS for accurate IMU calibration; the 3-camera recording calibrates the RGB camera relative to the stereo pair (low FPS is fine for static geometry).
 
-For the full calibration workflow (what to do with these recordings), see the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros2).
+For the full calibration workflow (what to do with these recordings), see the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros22).
 
 #### Recording 1: Stereo + IMU (for VIO)
 
@@ -513,7 +576,7 @@ ros2 bag record -o stereo_rgb_imu_calibration_record \
 
 ### Step 2: Run Basalt Calibration
 
-See the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros2) for the full calibration workflow:
+See the [Basalt ROS2 README](https://github.com/roboticsmick/basalt_ros22) for the full calibration workflow:
 
 1. **Stereo camera calibration** — `basalt_calibrate` on Recording 1 with `--cam-types pinhole-radtan8 pinhole-radtan8`
 2. **IMU calibration** — `basalt_calibrate_imu` on Recording 1 with same `--result-path`
@@ -1281,7 +1344,114 @@ Once you find good settings, copy the printed values into your ROS YAML config f
 
 ---
 
+## Running with basalt_ros2 VIO Node
+
+The depthai-ros driver provides stereo camera and IMU data for the basalt_ros2 visual odometry node.
+
+### Launch Sequence
+
+**Terminal 1 — Start camera driver:**
+
+```bash
+cd /media/logic/USamsung/ros2_ws
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_vio.yaml \
+  camera_model:=OAK-FFC-3P
+```
+
+**Terminal 2 — Start basalt VIO node:**
+
+```bash
+cd /media/logic/USamsung/ros2_ws
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+
+ros2 run basalt_ros2 visual_odometry_node
+```
+
+### Verify Pipeline is Live
+
+**Terminal 3 — Check topics:**
+
+```bash
+source /opt/ros/jazzy/setup.bash && source install/setup.bash
+
+# List published topics
+ros2 topic list | grep -E "oak/stereo|odometry|keypoints"
+
+# Expected output:
+# /oak/stereo/left/image
+# /oak/stereo/right/image
+# /oak/imu/data
+# /odometry
+# /keypoints
+```
+
+### Monitor Odometry Output
+
+```bash
+# View odometry messages (should arrive at ~30 Hz)
+ros2 topic echo /odometry | head -30
+
+# View keypoints (3D feature positions)
+ros2 topic echo /keypoints | head -30
+
+# Check TF tree (should include camera → base_link transform)
+ros2 run tf2_tools view_frames.py
+```
+
+### Known Issues During Integration
+
+- **No calibration file loaded** (BUG-007): VIO will run on default calibration (poor accuracy). See ROS2_BUG_LOG.md.
+- **StereoDepth alignment error** (BUG-006): Periodic warnings from depthai driver. Driver recovers automatically. See ROS2_BUG_LOG.md.
+
+---
+
 ## Troubleshooting
+
+### Warning: `Stereo alignment error: 1, trying to recover`
+
+**When it appears:**
+
+During live stereo operation, the StereoDepth node may log:
+
+```
+[StereoDepth(3)] [error] Stereo alignment error: 1, trying to recover.
+```
+
+This appears periodically in the camera driver terminal output.
+
+**What it means:**
+
+The stereo depth pipeline detected a mismatch in lens alignment or synchronization between the left and right cameras. This can be caused by:
+
+1. **Mechanical lens tilt/skew** — Stereo camera lenses not perfectly parallel
+2. **Missing factory calibration** — Camera needs factory recalibration for this unit
+3. **Synchronization timing issue** — Rare, but can occur if cameras drift during long captures
+
+**What happens:**
+
+- **Good news:** The driver auto-recovers and continues operation
+- **Potential impact:** Stereo depth quality may be reduced, affecting VIO feature matching accuracy
+- **No crash:** The pipeline remains stable and keeps publishing images
+
+**What to do:**
+
+1. **If accuracy is acceptable:** No action needed. The auto-recovery mechanism is sufficient.
+
+2. **If VIO tracking is poor or drifts quickly:**
+   - Run `basalt_calibrate` with an AprilGrid board to generate a proper stereo+IMU calibration file
+   - Pass the calibration file to visual_odometry_node: `--ros-args -p calib_path:=/path/to/calibration.json`
+   - This calibration accounts for the actual lens geometry of this hardware unit
+
+3. **If the error becomes very frequent:**
+   - The OAK-FFC-3P may have a mechanical issue (lens misalignment)
+   - Contact Luxonis support or consider replacing the camera module
+
+**Related:** See [BUG-006](../ROS2_BUG_LOG.md#bug-006-stereodepth-alignment-error-during-live-camera-test) in ROS2_BUG_LOG.md.
+
+---
 
 ### Disparity looks wrong or inverted
 
@@ -1313,8 +1483,46 @@ ros2 param get /oak driver.i_external_calibration_path
 
 ### compressedDepth errors
 
-- Normal for RGBStereo pipeline - use `/compressed` not `/compressedDepth`
-- compressedDepth only works with depth images (RGBD pipeline)
+**Error message:**
+
+```text
+[compressed_depth_image_transport]: Compressed Depth Image Transport - Compression requires
+single-channel 32bit-floating point or 16bit raw depth images (input format is: bgr8).
+```
+
+**Cause:** The `image_transport` plugin system is trying to load the `compressedDepth` transport
+for non-depth image topics (left/right mono or RGB color). This happens when the ROS2 component
+container auto-loads all available transport plugins, even if they're inappropriate for the
+topic type.
+
+**Note:** This is different from the RGBStereo pipeline comment above. In RGBD pipeline with
+mono stereo cameras, the compressedDepth plugin shouldn't be loaded at all because you're
+publishing raw mono images, not depth.
+
+**Fix - Disable the compressedDepth plugin:**
+
+```bash
+# Disable the plugin (it's not needed for raw stereo VIO)
+sudo mv /opt/ros/jazzy/lib/libcompressed_depth_image_transport_plugin.so \
+        /opt/ros/jazzy/lib/libcompressed_depth_image_transport_plugin.so.disabled
+
+# Restart the driver
+export ROS_IMAGE_TRANSPORT=raw
+ros2 launch depthai_ros_driver driver.launch.py \
+  params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_stereo_vio.yaml \
+  camera_model:=OAK-FFC-3P
+```
+
+**To re-enable later:**
+
+```bash
+sudo mv /opt/ros/jazzy/lib/libcompressed_depth_image_transport_plugin.so.disabled \
+        /opt/ros/jazzy/lib/libcompressed_depth_image_transport_plugin.so
+```
+
+**Why you don't need it:** For Basalt VIO on Jetson, you're feeding raw mono stereo images
+directly to the stereo/VIO algorithm. Compressed depth transport is only useful if you're
+publishing an already-computed depth map (16-bit or 32-bit), which you're not in this pipeline.
 
 ### "Model name OAK-FFC-3P not found" warning
 
