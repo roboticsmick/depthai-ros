@@ -16,7 +16,7 @@
     pipeline_gen:
       i_nn_type: none
       i_pipeline_type: RGB
-      i_enable_imu: false
+      i_enable_imu: true
 
     rgb:
       i_publish_topic: true
@@ -24,6 +24,10 @@
       i_fps: 2.0
       i_width: 3840
       i_height: 2160
+      i_synced: true                
+      i_enable_jpeg: true
+      i_mjpeg_quality: 90
+      i_format: "MJPEG"
 
       # === IMAGE QUALITY (from calibration script defaults) ===
       r_set_sharpness: true
@@ -40,3 +44,16 @@
       # Manual mode defaults (activate by setting r_set_man_exposure: true)
       r_exposure: 6000                  # Manual exposure time in microseconds
       r_iso: 800                        # Manual ISO (100-1600)
+
+    # ===================================================================
+    # === IMU (INDEPENDENT) ===
+    # ===================================================================
+    # IMU is NOT synced with images
+    # VIO code handles asynchronous IMU data via callback queue
+
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 100              # BMI270 max frequency
+      i_gyro_freq: 100 
+      i_sync_method: "LINEAR_INTERPOLATE_ACCEL"

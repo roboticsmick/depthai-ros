@@ -1,0 +1,73 @@
+# basalt_ros2 Camera Calibration — OAK-FFC-3P Stereo+IMU
+# Format: plain YAML (no "value0" wrapper)
+# Use with: ros2 run basalt_ros2 visual_odometry_node --ros-args -p calib_path:=.../calibration.yaml
+
+# == IMU to Camera Extrinsic Transforms ==
+# Two transforms: one for each stereo camera (left, right)
+# Fields: px, py, pz (translation in meters), qx, qy, qz, qw (quaternion, wxyz order)
+T_imu_cam:
+  - px: -0.05499737407572776
+    py: 0.041913036741636957
+    pz: -0.013502209622023176
+    qx: 0.4987773658928816
+    qy: -0.5019756402615706
+    qz: -0.5018965249900175
+    qw: 0.49733436846842757
+  - px: -0.05568187447898537
+    py: -0.058914245577160049
+    pz: -0.013517997452853073
+    qx: 0.4948301611290711
+    qy: -0.5050318652417838
+    qz: -0.5032312671754846
+    qw: 0.49683419615032378
+
+# == Camera Intrinsics ==
+# Two cameras: left and right (both pinhole-radtan8 model)
+intrinsics:
+  - camera_type: pinhole-radtan8
+    intrinsics:
+      fx: 450.32472818976256
+      fy: 450.45953084280105
+      cx: 321.8526742970475
+      cy: 195.05830141967685
+      k1: -20.764264940378728       # 1st radial coefficient
+      k2: 133.16508293163617        # 2nd radial coefficient
+      p1: 0.0010676989532219716     # 1st tangential coefficient
+      p2: 0.0004725430379178849     # 2nd tangential coefficient
+      k3: -7.68989715601195         # 3rd radial coefficient
+      k4: -20.75979718801228        # 4th radial coefficient
+      k5: 133.05468340853143        # 5th radial coefficient
+      k6: -7.024541785745228        # 6th radial coefficient
+  - camera_type: pinhole-radtan8
+    intrinsics:
+      fx: 452.04988300822887
+      fy: 452.10102525254606
+      cx: 323.52067565796735
+      cy: 208.21738095801019
+      k1: -22.425093115076494
+      k2: 165.75026332165195
+      p1: 0.0012183171166702634
+      p2: 0.0010267021905458866
+      k3: 32.44579104966674
+      k4: -22.419367618837805
+      k5: 165.58642359694546
+      k6: 33.4035162735488
+
+# == Image Resolution ==
+# Resolution for each camera [width, height]
+resolution:
+  - [640, 400]
+  - [640, 400]
+
+# == IMU Parameters (reference — not currently loaded by YAML loader) ==
+# These are present in the original calibration.json for completeness
+# but are currently skipped during YAML calibration loading
+#
+# imu_update_rate: 100.0085007225614
+# accel_noise_std: [0.02, 0.02, 0.02]
+# gyro_noise_std: [0.0005, 0.0005, 0.0005]
+# accel_bias_std: [0.001, 0.001, 0.001]
+# gyro_bias_std: [0.0001, 0.0001, 0.0001]
+# calib_accel_bias: [1.6169022502598496, 0.1757214356134216, -0.03021581766816116, ...]
+# calib_gyro_bias: [0.0022209799409027149, 0.00001768298752598417, -0.0012612765655428075, ...]
+# cam_time_offset_ns: 198
