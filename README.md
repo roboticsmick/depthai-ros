@@ -146,14 +146,29 @@ rosdep install --from-paths src --ignore-src -r -y
 
 ### Step 5: Build depthai-ros
 
+> **Always run `colcon build` from the workspace root (`ros2_ws/`), never from `src/`.** Running from `src/` puts `build/`, `install/`, and `log/` inside the source tree.
+
+The workspace root contains a `colcon.meta` file that automatically sets `CMAKE_PREFIX_PATH=/usr/local` for all depthai packages. No manual prefix is needed.
+
+> **Parallelism warning:** `--parallel-workers N` and `MAKEFLAGS="-jN"` are **multiplicative**.
+> `--parallel-workers 8` with `MAKEFLAGS="-j8"` = up to 64 simultaneous compiler processes and
+> will OOM-crash the machine. Keep the product ≤ 16 (Eigen/basalt template instantiation peaks
+> at ~1.5 GB per compiler process).
+
 ```bash
 cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash
 
-# Build with CMAKE_PREFIX_PATH to find depthai-core in /usr/local
-CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" \
-MAKEFLAGS="-j1 -l1" \
-colcon build --parallel-workers 1
+MAKEFLAGS="-j4" colcon build --parallel-workers 4
+```
+
+If memory is limited (< 8 GB RAM), use single-threaded:
+
+```bash
+cd $DEV_HOME/ros2_ws
+source /opt/ros/jazzy/setup.bash
+
+MAKEFLAGS="-j1 -l1" colcon build --parallel-workers 1
 ```
 
 ### Step 6: Source the Workspace
@@ -195,28 +210,39 @@ CMake Error at CMakeLists.txt:74 (target_link_libraries):
   Target "depthai_bridge" links to: depthai::core but the target was not found.
 ```
 
-**Root Cause:** CMAKE_PREFIX_PATH is not being passed through colcon to the CMake invocations.
+**Root Cause:** The workspace `colcon.meta` file is missing or has been deleted. This file sets `CMAKE_PREFIX_PATH=/usr/local` for all depthai packages so colcon passes it through to each CMake subprocess automatically.
 
-**Solution:** Set CMAKE_PREFIX_PATH as a **shell variable before the colcon command**, not via `export`:
+**Solution:** Verify `ros2_ws/colcon.meta` exists and contains the depthai entries. If it is missing, recreate it:
 
 ```bash
-# CORRECT - This works:
-CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" colcon build --packages-select depthai_bridge
-
-# WRONG - This doesn't work with colcon:
-export CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH"
-colcon build --packages-select depthai_bridge
+cat > $DEV_HOME/ros2_ws/colcon.meta << 'EOF'
+{
+  "names": {
+    "depthai_bridge": {
+      "cmake-args": ["-DCMAKE_PREFIX_PATH=/usr/local"]
+    },
+    "depthai_ros_driver": {
+      "cmake-args": ["-DCMAKE_PREFIX_PATH=/usr/local"]
+    },
+    "depthai_filters": {
+      "cmake-args": ["-DCMAKE_PREFIX_PATH=/usr/local"]
+    },
+    "depthai_examples": {
+      "cmake-args": ["-DCMAKE_PREFIX_PATH=/usr/local"]
+    }
+  }
+}
+EOF
 ```
 
-If you previously failed to build, clean the build artifacts first:
+Then clean and rebuild from the workspace root:
 
 ```bash
+cd $DEV_HOME/ros2_ws
 rm -rf build/depthai_bridge build/depthai_filters build/depthai_examples build/depthai_ros_driver
 rm -rf install/depthai_bridge install/depthai_filters install/depthai_examples install/depthai_ros_driver
-CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH" colcon build --packages-select depthai_bridge --parallel-workers 1
+MAKEFLAGS="-j4" colcon build --parallel-workers 4
 ```
-
-**Why this happens:** colcon runs each package's CMake in an isolated subprocess. The `export` command only affects the current shell, not the subprocess. Setting the variable directly in the command line passes it to the subprocess properly.
 
 #### Broken cmake config in /opt/ros/jazzy
 
@@ -228,10 +254,11 @@ sudo rm -rf /opt/ros/jazzy/lib/x86_64-linux-gnu/cmake/depthai.backup-*
 
 #### Build crashes (out of memory)
 
-Use single-threaded build:
+Use single-threaded build from the workspace root:
 
 ```bash
-MAKEFLAGS="-j8" colcon build --packages-select depthai-ros --parallel-workers 1
+cd $DEV_HOME/ros2_ws
+MAKEFLAGS="-j1 -l1" colcon build --parallel-workers 1
 ```
 
 
