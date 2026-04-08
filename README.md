@@ -17,7 +17,7 @@ Upstream docs: [docs.luxonis.com/software-v3/depthai/ros](https://docs.luxonis.c
 ## Integration Status
 
 **Tested Hardware:** Luxonis OAK-FFC-3P (ID: 14442C10B1991CD000)
-**ROS2 Workspace:** `/media/logic/USamsung/ros2_ws`
+**ROS2 Workspace:** `$DEV_HOME/ros2_ws`
 **Status:** ✅ Driver running and publishing topics (Session 3 — 2026-03-07)
 
 ### Published Topics (Confirmed Live)
@@ -55,17 +55,19 @@ depthai-ros Driver                    basalt_ros2 VIO Node
 
 ## Installation for ROS2 Jazzy (Build from Source)
 
-> **Important:** The official [Build from Source](https://docs.luxonis.com/software-v3/depthai/ros/build/) instructions use `install_dependencies.sh` which installs a **pre-built binary** of depthai-core. As of November 2025, this binary is incompatible with the depthai-ros `kilted` branch on ROS2 Jazzy - it fails with missing `MapData.hpp` errors.
+> **Important:** The official [Build from Source](https://docs.luxonis.com/software-v3/depthai/ros/build/) instructions use `install_dependencies.sh` which installs a **pre-built binary** of depthai-core. This binary is incompatible with the depthai-ros `kilted` branch on ROS2 Jazzy — it causes missing header errors and ABI mismatches.
 >
-> **The fix:** Build depthai-core from source instead of using the pre-built binary.
+> **The fix:** Build depthai-core from source (Step 1 below).
 
-**Path convention:** This guide uses `$DEV_HOME` to refer to your development workspace root. Set it in your `~/.bashrc`:
+**Path convention:** This guide uses `$DEV_HOME` as a symlink or variable pointing to the parent directory of `ros2_ws/`. Set it in your `~/.bashrc`:
 
 ```bash
-export DEV_HOME="/path/to/your/workspace"  # e.g. ~/ or /media/user/nvme
+export DEV_HOME="/path/to/your/dev/root"  # e.g. ~ or /media/user/nvme
 ```
 
-All workspace paths below use `$DEV_HOME/ros2_ws`. If you keep your workspace at `~/ros2_ws`, set `DEV_HOME` to your home directory or substitute accordingly.
+All paths in this guide use `$DEV_HOME/ros2_ws`. depthai-core is cloned to `$DEV_HOME/depthai-core`.
+
+> **Jetson note:** These steps apply to both x86_64 (Ubuntu 24.04) and ARM64 (Jetson, Ubuntu 22.04/24.04). Architecture-specific differences are noted inline.
 
 ### Prerequisites
 
@@ -79,43 +81,58 @@ sudo apt install -y build-essential cmake git python3-colcon-common-extensions \
     python3-rosdep python3-vcstool libusb-1.0-0-dev libopencv-dev
 ```
 
-### Step 1: Build and Install depthai-core from Source
+### Step 0: Remove any pre-built depthai from /opt/ros/jazzy
 
-**Do NOT use `install_dependencies.sh`** - it installs an incompatible pre-built binary.
+If you ever ran `install_dependencies.sh` (from the official Luxonis docs), it installed an incompatible pre-built depthai into `/opt/ros/jazzy`. This shadows the source-built version and causes header mismatch errors even after a clean build. Remove it first:
 
 ```bash
-# Choose an installation directory
-cd ~/  # or your preferred location
+sudo rm -rf \
+  /opt/ros/jazzy/include/depthai \
+  /opt/ros/jazzy/include/depthai-shared \
+  /opt/ros/jazzy/include/depthai-bootloader-shared \
+  /opt/ros/jazzy/include/depthai.backup-* \
+  /opt/ros/jazzy/include/depthai-shared.backup-* \
+  /opt/ros/jazzy/include/depthai-bootloader-shared.backup-* \
+  /opt/ros/jazzy/lib/x86_64-linux-gnu/libdepthai-core.so \
+  /opt/ros/jazzy/lib/x86_64-linux-gnu/libdepthai-core.so.backup-* \
+  /opt/ros/jazzy/lib/x86_64-linux-gnu/libdepthai-opencv.so \
+  /opt/ros/jazzy/lib/x86_64-linux-gnu/libdepthai-opencv.so.backup-* \
+  /opt/ros/jazzy/share/depthai \
+  /opt/ros/jazzy/share/depthai.backup-* \
+  /opt/ros/jazzy/lib/x86_64-linux-gnu/cmake/depthai
+```
+
+> **Jetson:** Replace `x86_64-linux-gnu` with `aarch64-linux-gnu` in the paths above.
+
+If you have never run `install_dependencies.sh`, skip this step — the directories won't exist.
+
+### Step 1: Build and Install depthai-core from Source
+
+```bash
+cd $DEV_HOME
 
 # Clone depthai-core with submodules (kilted branch)
 git clone --branch kilted --recursive https://github.com/luxonis/depthai-core.git
 cd depthai-core
 
-# Install python examples 
-python3 -m venv venv
-source venv/bin/activate
-# Installs library and requirements
-python3 examples/python/install_requirements.py
-echo "export OPENBLAS_CORETYPE=ARMV8" >> ~/.bashrc && source ~/.bashrc
-
-
-# Configure with Basalt VIO support (downloads ~80 vcpkg packages - takes time)
+# Configure (no extra VIO support needed — basalt_ros2 handles VIO separately)
 cmake -S . -B build \
-    -DDEPTHAI_BASALT_SUPPORT=ON \
     -DDEPTHAI_RTABMAP_SUPPORT=OFF \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 
-# Build (use -j1 to prevent crashes on memory-limited systems, or -j4 with enough RAM)
-cmake --build build -j1
+# Build
+# Use -j1 on memory-limited systems (< 8 GB RAM) or Jetson to avoid OOM crashes
+# Use -j4 with 16+ GB RAM on desktop
+cmake --build build -j4
 
-# Install (requires sudo for /usr/local)
+# Install to /usr/local (requires sudo)
 sudo cmake --install build
 
 # Update library cache so the system can find libdepthai-core.so
 sudo ldconfig
 ```
 
-**Note:** The cmake configure step downloads vcpkg dependencies including Basalt. The build takes significant time with `-j1`.
+> **Jetson:** The build takes significantly longer on ARM64. Use `-j2` as a safe default.
 
 ### Step 2: Set Up USB Rules
 
@@ -124,7 +141,7 @@ echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/ud
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-### Step 3: Create ROS2 Workspace and Clone depthai-ros
+### Step 3: Create ROS2 Workspace and Clone Repositories
 
 ```bash
 # Create workspace
@@ -133,86 +150,15 @@ cd $DEV_HOME/ros2_ws/src
 
 # Clone depthai-ros (kilted branch for Jazzy)
 git clone --branch kilted https://github.com/luxonis/depthai-ros.git
+
+# Also clone basalt_ros2 and kalibr_ros2 if you need them
+# git clone <basalt_ros2_url>
+# git clone <kalibr_ros2_url>
 ```
 
-### Step 4: Install ROS Dependencies
+### Step 4: Create Workspace Build Configuration
 
-```bash
-cd $DEV_HOME/ros2_ws
-sudo rosdep init  # Skip if already initialized
-rosdep update
-rosdep install --from-paths src --ignore-src -r -y
-```
-
-### Step 5: Build depthai-ros
-
-> **Always run `colcon build` from the workspace root (`ros2_ws/`), never from `src/`.** Running from `src/` puts `build/`, `install/`, and `log/` inside the source tree.
-
-The workspace root contains a `colcon.meta` file that automatically sets `CMAKE_PREFIX_PATH=/usr/local` for all depthai packages. No manual prefix is needed.
-
-> **Parallelism warning:** `--parallel-workers N` and `MAKEFLAGS="-jN"` are **multiplicative**.
-> `--parallel-workers 8` with `MAKEFLAGS="-j8"` = up to 64 simultaneous compiler processes and
-> will OOM-crash the machine. Keep the product ≤ 16 (Eigen/basalt template instantiation peaks
-> at ~1.5 GB per compiler process).
-
-```bash
-cd $DEV_HOME/ros2_ws
-source /opt/ros/jazzy/setup.bash
-
-MAKEFLAGS="-j4" colcon build --parallel-workers 4
-```
-
-If memory is limited (< 8 GB RAM), use single-threaded:
-
-```bash
-cd $DEV_HOME/ros2_ws
-source /opt/ros/jazzy/setup.bash
-
-MAKEFLAGS="-j1 -l1" colcon build --parallel-workers 1
-```
-
-### Step 6: Source the Workspace
-
-```bash
-source $DEV_HOME/ros2_ws/install/setup.bash
-```
-
-Add to your `.bashrc` for persistence:
-
-```bash
-echo "source $DEV_HOME/ros2_ws/install/setup.bash" >> ~/.bashrc
-```
-
-### Step 7: Verify Installation
-
-```bash
-# Test basic camera launch
-ros2 launch depthai_ros_driver driver.launch.py
-```
-
-### Troubleshooting Installation
-
-#### Error: `libdepthai-core.so: cannot open shared object file`
-
-```bash
-sudo ldconfig
-```
-
-#### Error: `MapData.hpp: No such file or directory`
-
-This means you're using the pre-built binary from `install_dependencies.sh`. You need to build depthai-core from source (Step 1).
-
-#### CMake can't find depthai: "target depthai::core not found"
-
-**Symptom:** Build fails with:
-```
-CMake Error at CMakeLists.txt:74 (target_link_libraries):
-  Target "depthai_bridge" links to: depthai::core but the target was not found.
-```
-
-**Root Cause:** The workspace `colcon.meta` file is missing or has been deleted. This file sets `CMAKE_PREFIX_PATH=/usr/local` for all depthai packages so colcon passes it through to each CMake subprocess automatically.
-
-**Solution:** Verify `ros2_ws/colcon.meta` exists and contains the depthai entries. If it is missing, recreate it:
+The workspace must have a `colcon.meta` file so that CMake can find the depthai-core library installed in `/usr/local`. Without this file, the build fails with "target depthai::core not found".
 
 ```bash
 cat > $DEV_HOME/ros2_ws/colcon.meta << 'EOF'
@@ -235,7 +181,104 @@ cat > $DEV_HOME/ros2_ws/colcon.meta << 'EOF'
 EOF
 ```
 
-Then clean and rebuild from the workspace root:
+### Step 5: Install ROS Dependencies
+
+```bash
+cd $DEV_HOME/ros2_ws
+sudo rosdep init  # Skip if already initialized
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
+```
+
+### Step 6: Build
+
+> **Always run `colcon build` from the workspace root (`ros2_ws/`), never from `src/`.** Running from `src/` puts `build/`, `install/`, and `log/` inside the source tree.
+> **Parallelism warning:** `--parallel-workers N` and `MAKEFLAGS="-jN"` are **multiplicative**.
+> `--parallel-workers 4` with `MAKEFLAGS="-j4"` = up to 16 simultaneous compiler processes.
+> Keep the product ≤ 16. Eigen/basalt template instantiation peaks at ~1.5 GB per process.
+
+```bash
+cd $DEV_HOME/ros2_ws
+source /opt/ros/jazzy/setup.bash
+
+MAKEFLAGS="-j4" colcon build --parallel-workers 4
+```
+
+If memory is limited (< 8 GB RAM) or on Jetson:
+
+```bash
+cd $DEV_HOME/ros2_ws
+source /opt/ros/jazzy/setup.bash
+
+MAKEFLAGS="-j2" colcon build --parallel-workers 2
+```
+
+### Step 7: Source the Workspace
+
+```bash
+source $DEV_HOME/ros2_ws/install/setup.bash
+```
+
+Add to your `.bashrc` for persistence:
+
+```bash
+echo "source $DEV_HOME/ros2_ws/install/setup.bash" >> ~/.bashrc
+```
+
+### Step 8: Verify Installation
+
+```bash
+# Test basic camera launch
+ros2 launch depthai_ros_driver driver.launch.py
+```
+
+### Troubleshooting Installation
+
+#### Error: `undefined symbol: _ZN3dai12ThreadedNode5startEv`
+
+**Symptom:** Launch fails with:
+
+```text
+Failed to load library: Could not load library dlopen error:
+libdepthai_ros_driver_common.so: undefined symbol: _ZN3dai12ThreadedNode5startEv
+```
+
+**Root Cause:** ABI mismatch — `libdepthai_ros_driver_common.so` was compiled against one version of depthai-core, but the depthai-core `.so` on the system has changed since (e.g. depthai-core was rebuilt/reinstalled after the last depthai-ros build).
+
+**Solution:** Clean rebuild of all depthai packages:
+
+```bash
+cd $DEV_HOME/ros2_ws
+rm -rf build/depthai_bridge build/depthai_filters build/depthai_examples build/depthai_ros_driver
+rm -rf install/depthai_bridge install/depthai_filters install/depthai_examples install/depthai_ros_driver
+source /opt/ros/jazzy/setup.bash
+MAKEFLAGS="-j4" colcon build --parallel-workers 4
+```
+
+#### Error: `libdepthai-core.so: cannot open shared object file`
+
+```bash
+sudo ldconfig
+```
+
+#### Error: `MapData.hpp: No such file or directory` or `tl/optional.hpp: No such file or directory`
+
+**Root Cause:** A pre-built depthai binary (from `install_dependencies.sh`) is installed in `/opt/ros/jazzy` and is shadowing the source-built version in `/usr/local`. The ament header scan picks up `/opt/ros/jazzy/include` before `/usr/local/include`.
+
+**Solution:** Remove the stale depthai from `/opt/ros/jazzy` (see Step 0), then clean and rebuild all depthai packages.
+
+#### CMake can't find depthai: "target depthai::core not found"
+
+**Symptom:** Build fails with:
+
+```text
+CMake Error at CMakeLists.txt:74 (target_link_libraries):
+  Target "depthai_bridge" links to: depthai::core but the target was not found.
+```
+
+**Root Cause:** The workspace `colcon.meta` file is missing. This file sets `CMAKE_PREFIX_PATH=/usr/local` so CMake can find depthai-core during build.
+
+**Solution:** Recreate it (see Step 4), then clean and rebuild:
 
 ```bash
 cd $DEV_HOME/ros2_ws
@@ -244,23 +287,18 @@ rm -rf install/depthai_bridge install/depthai_filters install/depthai_examples i
 MAKEFLAGS="-j4" colcon build --parallel-workers 4
 ```
 
-#### Broken cmake config in /opt/ros/jazzy
-
-If you previously ran `install_dependencies.sh` and see errors about `depthai.backup-*` directories:
-
-```bash
-sudo rm -rf /opt/ros/jazzy/lib/x86_64-linux-gnu/cmake/depthai.backup-*
-```
-
 #### Build crashes (out of memory)
-
-Use single-threaded build from the workspace root:
 
 ```bash
 cd $DEV_HOME/ros2_ws
-MAKEFLAGS="-j1 -l1" colcon build --parallel-workers 1
+MAKEFLAGS="-j2" colcon build --parallel-workers 2
 ```
 
+On Jetson or very memory-constrained systems:
+
+```bash
+MAKEFLAGS="-j1 -l1" colcon build --parallel-workers 1
+```
 
 ### Build Info
 
@@ -269,7 +307,7 @@ Successfully tested with:
 - **depthai-core:** `kilted` branch (commit `d1e4f8139` from 2025-11-26)
 - **depthai-ros:** `kilted` branch
 - **ROS2:** Jazzy
-- **Ubuntu:** 24.04
+- **Ubuntu:** 24.04 (x86_64), Jetson JetPack 6.x (ARM64)
 
 ---
 
@@ -1380,7 +1418,7 @@ The depthai-ros driver provides stereo camera and IMU data for the basalt_ros2 v
 **Terminal 1 — Start camera driver:**
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 
 ros2 launch depthai_ros_driver driver.launch.py \
@@ -1391,10 +1429,17 @@ ros2 launch depthai_ros_driver driver.launch.py \
 **Terminal 2 — Start basalt VIO node:**
 
 ```bash
-cd /media/logic/USamsung/ros2_ws
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 
-ros2 run basalt_ros2 visual_odometry_node
+ros2 run basalt_ros2 visual_odometry_node \
+  --ros-args \
+  -p calib_path:=$(pwd)/src/basalt_ros2/config/calibration.json \
+  -p config_path:=$(pwd)/src/basalt_ros2/config/vio_config.json \
+  -p imu_topic:=/oak/imu/data \
+  -p left_image_topic:=/oak/left/image_raw \
+  -p right_image_topic:=/oak/right/image_raw \
+  -p publish_cloud:=true
 ```
 
 ### Verify Pipeline is Live
@@ -1402,6 +1447,7 @@ ros2 run basalt_ros2 visual_odometry_node
 **Terminal 3 — Check topics:**
 
 ```bash
+cd $DEV_HOME/ros2_ws
 source /opt/ros/jazzy/setup.bash && source install/setup.bash
 
 # List published topics
@@ -1418,7 +1464,7 @@ ros2 topic list | grep -E "oak/stereo|odometry|keypoints"
 ### Monitor Odometry Output
 
 ```bash
-# View odometry messages (should arrive at ~30 Hz)
+# View odometry messages (should arrive at ~10 Hz)
 ros2 topic echo /odometry | head -30
 
 # View keypoints (3D feature positions)
