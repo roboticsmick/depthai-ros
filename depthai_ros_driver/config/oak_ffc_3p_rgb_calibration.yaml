@@ -1,0 +1,44 @@
+# OAK-FFC-3P RGB + IMU Calibration Recording Configuration
+#
+# Purpose: Record a bag file for IMU-camera calibration with kalibr_imu_ros2.
+#          NOT for survey use — higher FPS and lower resolution for calibration.
+#
+# Usage:
+#   ros2 launch depthai_ros_driver driver.launch.py \
+#     params_file:=$(pwd)/src/depthai-ros/depthai_ros_driver/config/oak_ffc_3p_rgb_calibration.yaml \
+#     camera_model:=OAK-FFC-3P
+#
+# Then record (in a second terminal):
+#   ros2 bag record -o rgb_imu_calibration /oak/rgb/image_raw /oak/imu/data
+#
+# Key differences from survey config (oak_ffc_3p_survey.yaml):
+#   - 10 FPS (vs 2 FPS) — Kalibr needs many poses; 2 FPS is too slow
+#   - 1920×1080 (vs 3840×2160) — lower resolution speeds up AprilGrid detection
+#   - No YOLO, no JPEG encoding — reduces latency
+#   - IMU at 200 Hz (matches kalibr_bmi270_imu.yaml update_rate)
+#
+/oak:
+  ros__parameters:
+    pipeline_gen:
+      i_nn_type: none        # No YOLO during calibration
+      i_pipeline_type: RGB
+      i_enable_imu: true
+
+    rgb:
+      i_publish_topic: true
+      i_board_socket_id: 0   # CAM_A — IMX577 (same socket as survey)
+      i_fps: 10.0             # 10 FPS for calibration (Kalibr needs dense poses)
+      i_width: 1920
+      i_height: 1080
+      i_enable_jpeg: false    # Raw images only — no compression artefacts
+
+      # Auto exposure — let camera settle during calibration
+      r_set_man_exposure: false
+
+    # IMU at 200 Hz to match the BMI270 imu.yaml noise parameters
+    imu:
+      i_batch_report_threshold: 1
+      i_max_batch_reports: 10
+      i_acc_freq: 200         # Must match update_rate in kalibr_bmi270_imu.yaml
+      i_gyro_freq: 200
+      i_sync_method: "LINEAR_INTERPOLATE_ACCEL"
