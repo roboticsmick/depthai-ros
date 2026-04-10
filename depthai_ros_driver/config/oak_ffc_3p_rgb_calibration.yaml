@@ -32,8 +32,21 @@
       i_height: 1080
       i_enable_jpeg: false    # Raw images only — no compression artefacts
 
-      # Auto exposure — let camera settle during calibration
-      r_set_man_exposure: false
+      # === IMAGE QUALITY (from calibration script defaults) ===
+      r_set_sharpness: true
+      r_sharpness: 1                    # Range 0-4
+      r_set_luma_denoise: true
+      r_luma_denoise: 3                 # Range 0-4
+      r_set_chroma_denoise: true
+      r_chroma_denoise: 2              # Range 0-4
+
+      # === EXPOSURE (auto mode with AE limit) ===
+      r_set_man_exposure: false         # Auto exposure
+      r_set_auto_exposure_limit: true
+      r_auto_exposure_limit: 6000       # AE limit in microseconds
+      # Manual mode defaults (activate by setting r_set_man_exposure: true)
+      r_exposure: 6000                  # Manual exposure time in microseconds
+      r_iso: 800                        # Manual ISO (100-1600)
 
     # IMU at 200 Hz to match the BMI270 imu.yaml noise parameters
     imu:
