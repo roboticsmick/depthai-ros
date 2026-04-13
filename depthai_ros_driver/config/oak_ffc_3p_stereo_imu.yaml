@@ -21,6 +21,6 @@
     imu:
       i_batch_report_threshold: 1
       i_max_batch_reports: 10
-      i_acc_freq: 200
-      i_gyro_freq: 200
+      i_acc_freq: 100
+      i_gyro_freq: 100
       i_sync_method: "LINEAR_INTERPOLATE_ACCEL"
